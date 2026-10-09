@@ -35,24 +35,24 @@ Accepted scope: every recommendation in the 2026-10-09 full audit in PRODUCT_REV
 
 | Audit item | Implemented foundation | Still required |
 | --- | --- | --- |
-| 1. Finish/recovery | Owner release/transfer, failure review, durable receipts/notifications | Stalled-owner/dependency recovery, arbitrary required-validator contracts, richer repair UI and fault injection at real external crash boundaries |
-| 2. Coherent terminal | Ink conversation UI, stable composer/status, searchable arrow-key pickers, grouped live activity, safe paste and Unicode editing | Richer Markdown/code/diff rendering, consistent inline validation across all dialogs, fresh-user acceptance |
+| 1. Finish/recovery | Owner release/transfer, failure review, durable receipts/notifications, stalled-task/dependency repair and required validators | Richer repair UI and further fault injection at external side-effect boundaries |
+| 2. Coherent terminal | Ink conversation UI, stable composer/status, searchable arrow-key pickers, grouped live activity, safe paste and Unicode editing | Markdown/code/diff subset and inline budget/research validation implemented in dev.11; full syntax/tables, remaining legacy dialogs and fresh-user acceptance remain |
 | 3. Composer | Audience, drafts/editor, file mentions/completion, queue edits/cancellation/arbitrary ordering and explicit Pi active-turn steering | Broader interactive terminal acceptance |
 | 4. Files/deliverables | Scoped image/text/CSV/PDF/Office snapshots and text/binary artifact export | Image previews and graphical file browsing |
-| 5. Project sessions | Root persistence, names/archive/search, reviewed instructions/defaults/lineups, forks and bounded portable bundles including Pi histories | Full-runtime disaster-recovery tooling beyond a session bundle; large-session/crash-during-staging acceptance |
-| 6. Evidence collaboration | Explicit stages, independent exploration, contribution board, JSON validation | General stage prerequisite graph and acceptance rules; optional dynamic teams; measured benefit versus a one-agent baseline |
-| 7. Models/accounts | Supported login UI, model picker, effort/output/context controls | Real OpenAI/Anthropic first-login/expiration acceptance, explicit provider fallback and fallback recovery |
-| 8. Safe execution | Existing constrained container JS; exact approved host commands | General project sandbox, tested mounts/network limits, scoped execution grants/revocation. Docker was not found in this execution environment. Host/MCP programs remain unsandboxed. |
-| 9. Change review | Hash-protected writes/patches, per-file preview/accept/undo, attribution | Change groups and coordinated optional Git/worktree review/merge |
-| 10. Integrations | Explicit MCP connections/allowlists, per-agent pool/reconnect/resources and instruction snapshots | Remote MCP OAuth/resource templates; reviewed complete skill packages/manifests; enforceable executable plugin isolation |
-| 11. Research/memory | Configured research service, scoped expiring human memory | Supported search/fetch adapters, citations/cache/browser inspection, full-text project search and richer freshness/evidence controls |
+| 5. Project sessions | Root persistence, names/archive/search, reviewed instructions/defaults/lineups, forks, portable bundles and encrypted full-runtime backup/restore including Pi histories; killed-restore acceptance | Larger production-runtime and cross-OS restore acceptance |
+| 6. Evidence collaboration | Explicit stages, independent exploration, contribution board, JSON validation | Prerequisite graphs/acceptance rules and recorded solo/team reports implemented; optional autonomous teams and measured hosted benefit remain |
+| 7. Models/accounts | Supported login UI, model picker, effort/output/context controls and explicit provider fallback/recovery | Hosted fallback and Anthropic first-login/expiration acceptance; OpenAI login user-confirmed |
+| 8. Safe execution | Constrained container JS, approved host commands and real WSL/Linux project sandbox with tested isolation/scoped grants/revocation | Aggregate cgroup limits, larger workloads and other OS acceptance. Host/MCP programs remain unsandboxed. |
+| 9. Change review | Hash-protected writes/patches, attribution, change groups and optional commit-bound Git worktree review/merge | Rich diff rendering, binary/deletion proposals and stronger multi-file transactional recovery |
+| 10. Integrations | Explicit MCP connections/allowlists, per-agent pool/reconnect/resources and instruction snapshots | Pi OAuth/templates and reviewed complete packages with sandbox script execution implemented; hosted OAuth acceptance and arbitrary native-plugin isolation remain |
+| 11. Research/memory | Configured research service, scoped expiring human memory | SearXNG/JSON search, allowlisted page text/citations/cache and FTS implemented; rendered browser and richer evidence/freshness controls remain |
 | 12. Release/evaluation | Local Windows installer/rollback and deterministic coverage | Published reproducible release, fresh-machine/OS matrix, live-provider matrix, fresh-user study and matched outcome/cost/latency evaluations |
 
 ## Acceptance boundaries
 
 Automated provider tests use deterministic mocks or local HTTP protocol fixtures. They are not live hosted inference. Account authorization requires the user's supported interactive flow; credentials are never copied from other applications. No remote publication or push is part of this milestone. Do not mark this checklist complete based on the local test count.
 
-Next executable work: fresh-user Ink acceptance, then validator/recovery contracts, project sandbox and the remaining integration lifecycle. Keep deterministic tests and live/user-dependent acceptance results separate. The sandbox requires an available isolation runtime before its security acceptance can pass.
+Sprint 1 implementation is documented in SPRINT_1.md. Sprint 2 implementation and explicit limits are documented in SPRINT_2.md; hosted/fresh-user acceptance remains separate. The two real sandbox tests require the documented Linux isolation runtime.
 
 
 ## dev.7 focused readability correction

@@ -5,7 +5,7 @@ import { Writable } from 'node:stream';
 import { stdin, stdout } from 'node:process';
 import { completeFileMention } from './composer.js';
 
-export interface MenuIO { select?(label: string, choices: string[]): Promise<number>; ask(label: string, secret?: boolean, signal?: AbortSignal): Promise<string>; print(value: unknown): void; menu?(title: string, rows: string[], hint?: string): void }
+export interface MenuIO { askValidated?(label: string, validate: (value: string) => string | undefined): Promise<string>; select?(label: string, choices: string[]): Promise<number>; ask(label: string, secret?: boolean, signal?: AbortSignal): Promise<string>; print(value: unknown): void; menu?(title: string, rows: string[], hint?: string): void }
 /** One input owner for chat, menus and authentication. Secret lines never enter chat/history. */
 export function createInput(commands: () => string[] = () => []) {
   let muted = false; let closed = false;
@@ -41,6 +41,7 @@ export function createInput(commands: () => string[] = () => []) {
   return { rl, legacyReadline: rl, lines, ask, setProjectRoot(root: string) { projectRoot = root; }, async suspend<T>(work: () => Promise<T>): Promise<T> { rl.pause(); const raw = stdin.isRaw; if (stdin.isTTY) stdin.setRawMode(false); try { return await work(); } finally { if (stdin.isTTY) stdin.setRawMode(Boolean(raw)); rl.resume(); } } };
 }
 export interface TerminalInput {
+  askValidated?(label: string, validate: (value: string) => string | undefined): Promise<string>;
   rl: EventEmitter & { close(): void };
   legacyReadline?: Interface;
   lines: AsyncIterableIterator<string>;
@@ -56,3 +57,14 @@ export async function choose<T>(io: MenuIO, label: string, entries: readonly T[]
   if (io.menu) io.menu(label, rows, 'Choose a number. Type cancel to return.'); else io.print(rows.join('\n'));
   while (true) { const answer = await io.ask(label + ' (number; cancel to leave)'); const n = Number(answer); if (Number.isInteger(n) && n >= 1 && n <= entries.length) return entries[n - 1]!; io.print('Select a listed number.'); }
 }
+
+export async function askValidated(io: MenuIO, label: string, validate: (value: string) => string | undefined): Promise<string> {
+  if (io.askValidated) return io.askValidated(label, validate);
+  while (true) { const value = await io.ask(label); const error = validate(value); if (!error) return value; io.print(error); }
+}
+export function fieldError(error: unknown): string {
+  const issues = (error as { issues?: { path: PropertyKey[]; message: string }[] }).issues;
+  return issues ? issues.slice(0, 3).map(i => (i.path.join('.') || 'Value') + ': ' + i.message).join('; ') : String(error);
+}
+
+export function showMenu(io: MenuIO, title: string, rows: string[]): void { if (io.menu) io.menu(title, rows); else io.print([title, ...rows].join('\n')); }

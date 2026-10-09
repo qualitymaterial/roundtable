@@ -1,3 +1,4 @@
+import { ContractInput } from './recovery.js';
 import { extractionSchema, documentTypes } from './documents.js';
 import { artifactBytes, binaryMime } from './artifacts.js';
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -8,12 +9,12 @@ import type { Engine } from './engine.js';
 import type { Repository, EntityKind } from './storage.js';
 import { AgentInput, Limits, MessageInput, id, timestamp, type AgentRecord, type SessionRecord } from './domain.js';
 import { sensitiveHostPath } from './host-tools.js';
-import { Stage } from './policy.js';
+import { Stage, validateStages } from './policy.js';
 import { InstructionSnapshot } from './projects.js';
 
 const maxBytes = 64 * 1024 * 1024;
 const hash = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
-const kinds = ['task', 'artifact', 'note', 'attachment', 'evidence', 'draft', 'checkpoint', 'job', 'operation'] as const;
+const kinds = ['contract', 'task', 'artifact', 'note', 'attachment', 'evidence', 'draft', 'checkpoint', 'job', 'operation'] as const;
 const jsonRecord = z.record(z.string(), z.unknown());
 const File = z.object({ area: z.enum(['workspace', 'history']), agentId: z.string().optional(), path: z.string().min(1).max(2000), data: z.string().max(maxBytes), hash: z.string().regex(/^[a-f0-9]{64}$/) }).strict();
 const Payload = z.object({
@@ -28,6 +29,7 @@ const Envelope = z.object({ format: z.literal('roundtable-session'), sha256: z.s
 const base = z.object({ id: z.string().min(1).max(200), sessionId: z.string() });
 const digestSchema = z.string().regex(/^[a-f0-9]{64}$/);
 const schemas = {
+  contract: ContractInput.extend({ id: z.string(), sessionId: z.string(), active: z.boolean(), createdAt: z.string() }),
   task: base.extend({ title: z.string().max(500), state: z.enum(['open', 'claimed', 'done', 'cancelled']), owner: z.string().optional(), findings: z.string().max(64000), dependencies: z.array(z.string()).max(1000) }),
   artifact: base.extend({ name: z.string().max(200), content: z.string().max(3 * 1024 * 1024), encoding: z.literal('base64').optional(), mimeType: z.string().max(200).optional(), bytes: z.number().int().min(1).max(2 * 1024 * 1024).optional(), hash: digestSchema, author: z.string(), createdAt: z.string(), provenance: z.string().max(1000) }),
   note: base.extend({ author: z.string(), text: z.string().max(64000), kind: z.enum(['note', 'decision']), timestamp: z.string() }),
@@ -154,7 +156,7 @@ export function restoreBundle(repo: Repository, input: SessionBundle, projectRoo
   const session: SessionRecord = { id: sessionId, objective: z.string().min(1).max(12000).parse(source.objective), constraints: z.string().max(12000).parse(source.constraints ?? ''), policy: z.enum(['open', 'goal', 'structured', 'parallel']).parse(source.policy), createdAt: timestamp(), state: 'paused', reason: 'Imported branch: review inputs, participants and access before /resume', workspace, projectRoot: realpathSync(projectRoot), name: name ?? `${String(source.name ?? source.objective).slice(0, 100)} (branch)`, permissions: safePermissions, limits: Limits.parse(source.limits), usage: { exchanges: 0, toolCalls: 0, requests: 0, tokens: 0, dollars: 0 }, providerRequests: {}, sourceSession: String(source.id), referenceMap: Object.fromEntries(ids) };
   if (source.workflow) {
     const workflow = z.object({ stages: z.array(Stage).min(1).max(20) }).parse(source.workflow);
-    session.workflow = { stages: workflow.stages, index: 0, ready: [], startedAt: timestamp(), artifactIds: [], history: [] };
+    session.workflow = { stages: validateStages(workflow.stages), index: 0, ready: [], startedAt: timestamp(), artifactIds: [], history: [] };
   }
   if (source.projectInstructions ?? source.importedProjectInstructions) session.importedProjectInstructions = InstructionSnapshot.parse(source.projectInstructions ?? source.importedProjectInstructions);
   // Validate and stage all files before making the branch visible in SQLite.

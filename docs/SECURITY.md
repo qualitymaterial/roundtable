@@ -67,3 +67,11 @@ Original binary inputs/artifacts are stored privately and exported byte-for-byte
 Ink has one input owner. Bracketed paste cannot submit hidden lines, secret answers are absent from snapshots/history, and terminal controls are stripped from untrusted output. Approvals still require the existing human commands and retain exact command/cwd details. MCP pooling separates participants and never automatically retries an invocation with uncertain remote effects. Local MCP programs and trusted tool plugins retain OS user privileges; pooling does not sandbox them.
 
 Approval command control and bidi characters are displayed as literal Unicode escapes rather than silently disappearing or changing the terminal. Newlines and ordinary command text remain readable; known credentials remain redacted.
+
+## Sprint 1 execution and backup boundaries
+
+See [SPRINT_1.md](SPRINT_1.md). WSL/Bubblewrap project execution uses a filtered copy, private namespaces, no external network and bounded tmpfs/process resources. It never applies candidate files directly. Approved host commands and Git remain OS-privileged. Kernel vulnerabilities and aggregate cgroup quotas are outside the current guarantee. Full-runtime backups encrypt Roundtable credentials and histories; restore disables execution grants and pending replay. Interrupted staging can contain decrypted data and has an explicit dead-owner cleanup command.
+
+## Sprint 2 additions
+
+MCP OAuth credentials belong only to Roundtable, bind to exact endpoint URLs and participate in runtime redaction. Newly discovered authorization origins require human consent; redirects/oversized responses fail. MCP stdio still has OS-user privileges. Package install/inspection/staging executes nothing; scripts need explicit sandbox grants. Hashes detect corruption, not malicious publishers. Page fetch requires an exact approved origin and sends no cookies or provider credentials; it does not follow redirects or execute JavaScript. An approved internal origin is intentional network access, not a public-only crawler. See SPRINT_2.md for all limits.

@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0-dev.11 � Sprint 2: everyday UX and integrations
+
+- Rendered a restrained Markdown/code/diff subset, grouped before/after previews and reusable inline field validation; replaced raw skill/MCP/memory/workflow views with readable menus.
+- Added reviewed skill package manifests, supporting-file retrieval and explicit staging for isolated script execution.
+- Integrated official Pi MCP OAuth browser login/refresh/logout with exact-endpoint credential storage, approved authorization origins and resource-template discovery.
+- Added configurable SearXNG/JSON search, origin-allowlisted text page reading, cited timestamped snapshots and session caches.
+- Migrated notes/project memory to SQLite FTS5 while preserving scope, expiry and explicit sharing.
+- Added workflow prerequisite graphs, task/validation acceptance rules and recorded solo/team evaluation reports with explicit evidence limits.
+- Verified local protocol, isolation and regression coverage. Hosted service/account, fresh-user, cross-OS and model-quality acceptance remain separate; see docs/SPRINT_2.md.
+
+## 0.2.0-dev.10 — Sprint 1: reliable everyday work
+
+- Added required artifact validation, independent checks, stalled-task diagnosis and audited dependency/owner repairs.
+- Added scoped, expiring and revocable WSL/Linux Bubblewrap project execution with private copies, no external network and bounded output.
+- Added grouped file review/apply/accept/undo and optional commit-bound Git worktree review with uncommitted merge.
+- Added explicit per-participant provider fallback and connection recovery without automatic failed-message replay.
+- Added encrypted full-runtime backups, conservative staged restore, process exclusion and killed-process staging cleanup.
+- Passed 128 tests with real WSL checks enabled, strict type checking, lint and build. See docs/SPRINT_1.md and docs/TESTING.md for limits and evidence.
+
 ## 0.2.0-dev.9 — reference layout refinement
 
 - Refined Ink styling against the supplied Roundtable reference: compact LOCAL header, session heading above the transcript, muted rounded composer and one-line footer.

@@ -26,7 +26,7 @@ export class InkTerminal {
   input(commands: () => string[]): TerminalInput {
     this.controller.reopen(); this.controller.commands = commands; this.mount();
     const events = this.controller.inputEvents as TerminalInput['rl']; events.close = () => { this.controller.close(); };
-    return { rl: events, lines: this.controller.lines, ask: this.controller.ask, select: this.controller.select, setProjectRoot: root => this.controller.setProjectRoot(root), suspend: async <T,>(work: () => Promise<T>): Promise<T> => {
+    return { rl: events, lines: this.controller.lines, ask: this.controller.ask, askValidated: this.controller.askValidated, select: this.controller.select, setProjectRoot: root => this.controller.setProjectRoot(root), suspend: async <T,>(work: () => Promise<T>): Promise<T> => {
       await this.instance?.waitUntilRenderFlush(); if (!this.suspendTerminal) throw new Error('Terminal is not ready for an external program');
       let result!: T; await this.suspendTerminal(async () => { result = await work(); }); return result;
     } };

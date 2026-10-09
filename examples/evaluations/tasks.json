@@ -1,0 +1,6 @@
+[
+  {"id":"data","objective":"Normalize the supplied CSV, explain rejected records, and produce a JSON summary.","artifact":"summary.json","assertions":["Independently calculate exact row totals from the supplied fixture","Verify rejected row IDs"],"rubric":"Accuracy, traceability, clarity; review independently"},
+  {"id":"code","objective":"Implement a persistent append-only memory store with reopen recovery and tests.","artifact":"prototype.py","assertions":["Use a separately reviewed sandbox validator","Verify reopen order, duplicate protection and invalid input"],"rubric":"Correctness, maintainability, tested failure behavior"},
+  {"id":"research","objective":"Compare three persistent memory designs using the supplied source corpus and cite evidence.","artifact":"comparison.md","assertions":["Check source references against the fixed corpus"],"rubric":"Evidence fidelity, uncertainty, useful tradeoffs; human review required"},
+  {"id":"writing","objective":"Produce an onboarding guide from the supplied product requirements.","artifact":"guide.md","assertions":["Verify required launch and recovery commands"],"rubric":"Usability, correctness, concision; human review required"}
+]

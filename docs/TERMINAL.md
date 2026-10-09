@@ -90,3 +90,9 @@ Use `/settings`, `/model`, `/login`, `/logout`, `/skills`, `/skill:name` and `/m
 Interactive terminals default to compact mode. Startup shows the project, participant models and effective access without repeated metadata panels. Tool activity is accumulated into an ACTIVITY panel at response/pause/error boundaries, with completed/running/failed counts and the last tool for up to three participants. /activity opens full details; /messages opens internal discussion and full response text. This is command-based expansion, not a clickable GUI card or continuously refreshed full-screen region.
 
 Compact mode suppresses raw successful tool results, peer messages, tool-use narration and partial streams; it previews completed responses once (16 lines or 1,600 characters, with an explicit continuation pointer). Errors and approvals are always visible. /view verbose restores detailed live output; /view compact returns to the default. The preference is saved. Piped output and headless events remain detailed. Filtering is presentation only: it does not reduce provider calls, fix acknowledgement loops or remove history.
+
+## Sprint 1 reliability controls (dev.10)
+
+Use `/recovery`, `/require-check`, `/sandbox`, `/change-group`, `/worktree`, `/fallback` and `/provider-recover`. Required checks and isolated execution are real controls; grouped changes preserve review/undo evidence. Offline encrypted backup is available through `roundtable runtime backup` and `restore`. See [SPRINT_1.md](SPRINT_1.md) for commands, limits, dependencies and acceptance boundaries.
+
+Dev.11 adds the bounded Markdown/code/diff renderer, inline invalid-field messages for budget/research and initial endpoint fields, readable skill/MCP/memory/stage views, /research, /skill-stage and optional next-stage selection. New browser MCP sign-in remains human-controlled and cancelable. See SPRINT_2.md for commands and supported formatting.

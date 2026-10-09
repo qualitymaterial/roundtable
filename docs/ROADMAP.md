@@ -1,27 +1,23 @@
 # Roadmap
 
-## Operational in the initial implementation
+## Current milestone
 
-Independent Pi sessions; configurable providers/models/instructions; real tools; asynchronous routing; durable history; tasks/artifacts/notes; bounded scheduling; approvals/audits; restart recovery and independently validated collaboration. Host browse/search/read/hash-checked edits and exact approved host commands work. The global CLI uses stable runtime state and a refreshed terminal interface. Configured research and MCP are tested against local fixtures.
+Sprint 1 (0.2.0-dev.10) delivered task recovery and required validation, scoped project isolation, grouped change/Git review, explicit provider fallback and encrypted runtime recovery. See [SPRINT_1.md](SPRINT_1.md) for commands and security boundaries and [TESTING.md](TESTING.md) for verification. STATUS.md remains canonical.
 
-## Highest-value next milestone
+The existing product includes independent Pi sessions, tool-enabled collaboration, durable tasks/artifacts/history, supported provider login, Ink conversation UI, guarded host access, document inputs, steering, MCP connection pooling and portable session bundles.
 
-See the [product review integration ledger](PRODUCT_REVIEW.md) for every recommendation and remaining acceptance check. Guided setup, metered native compaction/retries, completion reporting, process claims, checkpoints, background jobs, curated memory, recipes and headless events are implemented in 0.2.0-dev.1. Deterministic tests and Windows installation pass. Next: hosted long-task acceptance with independent checks of summary fidelity, restored constraints and genuine completion.
+## Sprint 2 implementation and remaining acceptance
 
-Improve autonomous convergence and context efficiency using hosted evidence. Human-staged three-model acceptance now passes across Z.ai/OpenRouter with tools, peer messages, a shared task, an independently validated artifact and restored snapshot. The open-ended run reached its token budget. Reduce unnecessary context/tool output, expose actionable validation feedback, and test convergence under explicit budgets. Separately complete supported Codex OAuth login and a three-provider run; do not copy subscription credentials.
+Sprint 2 is delivered in 0.2.0-dev.11; [SPRINT_2.md](SPRINT_2.md) documents its bounded interfaces. It adds Markdown/code/diff presentation, inline validation infrastructure, complete reviewed skill snapshots with sandbox script execution, official Pi MCP OAuth/templates, SearXNG/JSON research and page text inspection, FTS memory, prerequisite graphs and recorded matched-session measurement.
 
-## Follow-up work
+Remaining acceptance and expansion:
 
-- Test Docker execution with pinned image digests and hostile fixtures; add hardened deployment isolation. Current process claims cover one shared database, not distributed ownership.
-- Improve stage enforcement for structured policies, semantic loop detection and delegation depth. Native summaries are metered but their hosted fidelity still needs evaluation.
-- Add richer patch-based editing and larger artifact stores; host recursive search and approved command-based Git operations are available now.
-- Add remote MCP OAuth/multiple servers, extension lifecycle persistence, validated candidate-tool workflows and a companion Pi extension.
-- Add complete storage-adapter conformance, richer provider diagnostics and per-agent budgets; run the OS CI matrix remotely before claiming portability.
-- Add terminal streaming with robust redaction, richer references/history/session selection and web/desktop/editor surfaces. Headless NDJSON is a CLI interface, not a versioned network API.
-- Extend guarded-file undo to multi-file transactions, add binary/document artifacts, and compare solo versus team outcomes on reproducible research/writing/data/coding tasks.
+- Full Markdown/table/syntax rendering and migration of remaining legacy dialogs; fresh-user keyboard acceptance.
+- Arbitrary native plugin lifecycle/isolation beyond sandboxed package scripts.
+- Hosted MCP authorization-server diversity, pre-registered confidential clients and production credential-refresh testing.
+- Rendered browser automation and richer evidence/freshness controls beyond bounded text snapshots.
+- Parallel active workflow stages, optional autonomous teams and real matched hosted-quality studies.
 
-No mandatory account, cloud backend, telemetry, paid Roundtable tier or fixed-role hierarchy is planned.
+The full accepted audit remains in [IMPLEMENTATION_CHECKLIST.md](IMPLEMENTATION_CHECKLIST.md). Further release work includes reproducible publication, clean-machine/OS tests, hosted provider fallback and credential-refresh acceptance, larger production runtime recovery, richer change proposals and aggregate sandbox resource quotas. These are not proven by local fixture counts.
 
-## Settings UX implementation
-
-Settings/auth/model selection and explicit skill/MCP management work in the terminal; see [SETTINGS.md](SETTINGS.md). Version 0.2.0-dev.3 adds searchable numbered command/session/model menus, model favorites, a local-endpoint wizard and configuration diagnostics with explicit model probes. Dev.6 adds project profiles, portable forks/imports, file mentions/editor, multi-file snapshots/version UI and endpoint lifecycle. Next prioritize PDF/Office extraction and binary outputs, active-turn steering, persistent keyboard/composer UX and connection reconnect. Remote MCP OAuth/resources, persistent connections and a full-screen fuzzy command palette remain follow-up work. Do not infer hosted login success from injected auth-event tests or LM Studio/Ollama compatibility from fixture servers.
+No mandatory account, cloud backend, telemetry, paid Roundtable tier or fixed-role hierarchy is planned. Remote publication and paid model runs require their own authorization.

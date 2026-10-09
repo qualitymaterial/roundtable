@@ -1,3 +1,4 @@
+import { Markdown } from './markdown.js';
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Box, Text, Static, useInput, usePaste, useWindowSize, useApp, useCursor, measureElement, type DOMElement, type SuspendTerminal } from 'ink';
 import stringWidth from 'string-width';
@@ -31,7 +32,7 @@ export function MessageEntry({ entry, theme, width = 80 }: { entry: Entry; theme
   const color = entry.kind === 'error' ? theme.error : entry.kind === 'approval' ? theme.warning : undefined;
   return <Box flexDirection="column" marginBottom={1}>
     {entry.title && <Text bold color={color}>{decoration(entry.kind === 'error' ? 'Error · ' : entry.kind === 'approval' ? 'Approval required · ' : '', theme)}{entry.title}{entry.model && <Text bold={false} dimColor={theme.color}>{decoration(` · ${entry.model}`, theme)}</Text>}</Text>}
-    <Text wrap="wrap" dimColor={theme.color && entry.kind === 'activity'}>{entry.body}</Text>
+    {entry.kind === 'message' && entry.agentId !== 'human' ? <Markdown text={entry.body} theme={theme} /> : <Text wrap="wrap" dimColor={theme.color && entry.kind === 'activity'}>{entry.body}</Text>}
   </Box>;
 }
 export function StatusLine({ state, theme }: { state: Presentation; theme: Theme }) {

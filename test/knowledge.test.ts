@@ -22,7 +22,8 @@ test('curated memory is scoped, expires, survives reopening and deletes without 
 });
 
 test('workflow recipes validate without executable hooks or implicit permissions', () => {
-  assert.equal(workflows().length, 5);
+  assert.equal(workflows().length, 6);
+  assert.equal(loadWorkflow('verified-delivery').stages?.at(-1)?.requireValidation, true);
   assert.equal(loadWorkflow('independent-review').stages?.[0]?.blind, true);
   const recipe = loadWorkflow('research'); assert.equal(recipe.version, 1);
   assert.throws(() => Workflow.parse({ ...recipe, permissions: ['host.execute'] }));

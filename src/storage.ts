@@ -1,9 +1,10 @@
+import { runtimeAccess } from './runtime-access.js';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { id, timestamp, redact, type Delivery, type Message } from './domain.js';
 
-export type EntityKind = 'steering' | 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note' | 'checkpoint' | 'job' | 'knowledge' | 'operation' | 'notification' | 'draft' | 'attachment' | 'evidence';
+export type EntityKind = 'research' | 'worktree' | 'contract' | 'validation' | 'sandbox' | 'changegroup' | 'fallback' | 'steering' | 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note' | 'checkpoint' | 'job' | 'knowledge' | 'operation' | 'notification' | 'draft' | 'attachment' | 'evidence';
 export interface StorageAdapter {
   get<T>(kind: EntityKind, id: string): T | undefined;
   list<T>(kind: EntityKind, sessionId?: string): T[];
@@ -11,9 +12,11 @@ export interface StorageAdapter {
 }
 export class Repository implements StorageAdapter {
   readonly db: DatabaseSync;
+  private releaseRuntime: () => void;
   constructor(readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
-    this.db = new DatabaseSync(path);
+    this.releaseRuntime = runtimeAccess(dirname(path));
+    try { this.db = new DatabaseSync(path); } catch (error) { this.releaseRuntime(); throw error; }
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS migrations(version INTEGER PRIMARY KEY, applied TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS entities(kind TEXT NOT NULL, id TEXT NOT NULL, session_id TEXT NOT NULL, data TEXT NOT NULL, PRIMARY KEY(kind,id));
@@ -26,6 +29,20 @@ export class Repository implements StorageAdapter {
       CREATE TABLE IF NOT EXISTS delivery_order(message_id TEXT PRIMARY KEY REFERENCES messages(id), rank INTEGER NOT NULL);
       INSERT OR IGNORE INTO migrations VALUES(1,datetime('now'));
       INSERT OR IGNORE INTO migrations VALUES(2,datetime('now'));`);
+    if (!this.db.prepare('SELECT 1 FROM migrations WHERE version=3').get()) this.transaction(() => {
+      this.db.exec(`CREATE VIRTUAL TABLE memory_fts USING fts5(text, tokenize='unicode61');
+        INSERT INTO memory_fts(rowid,text) SELECT rowid,json_extract(data,'$.text') FROM entities WHERE kind IN ('note','knowledge');
+        CREATE TRIGGER memory_insert AFTER INSERT ON entities WHEN new.kind IN ('note','knowledge') BEGIN INSERT INTO memory_fts(rowid,text) VALUES(new.rowid,json_extract(new.data,'$.text')); END;
+        CREATE TRIGGER memory_delete AFTER DELETE ON entities WHEN old.kind IN ('note','knowledge') BEGIN DELETE FROM memory_fts WHERE rowid=old.rowid; END;
+        CREATE TRIGGER memory_update AFTER UPDATE ON entities WHEN new.kind IN ('note','knowledge') BEGIN DELETE FROM memory_fts WHERE rowid=old.rowid; INSERT INTO memory_fts(rowid,text) VALUES(new.rowid,json_extract(new.data,'$.text')); END;
+        INSERT INTO migrations VALUES(3,datetime('now'));`);
+    });
+  }
+  search(kind: 'note' | 'knowledge', scope: string, query: string, limit = 30, now = Date.now()): Record<string, unknown>[] {
+    const terms = query.match(/[\p{L}\p{N}_]+/gu)?.slice(0, 20) ?? [];
+    if (!terms.length) return [];
+    const match = terms.map(t => '"' + t + '"*').join(' AND ');
+    return this.db.prepare(`SELECT e.data FROM memory_fts f JOIN entities e ON e.rowid=f.rowid WHERE memory_fts MATCH ? AND e.kind=? AND CASE WHEN e.kind='knowledge' THEN json_extract(e.data,'$.scope') ELSE e.session_id END=? AND (e.kind!='knowledge' OR json_extract(e.data,'$.expiresAt')>?) ORDER BY bm25(memory_fts) LIMIT ?`).all(match, kind, scope, new Date(now).toISOString(), Math.max(1, Math.min(50, limit))).map(r => JSON.parse(String(r.data)) as Record<string, unknown>);
   }
   transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -92,5 +109,5 @@ export class Repository implements StorageAdapter {
   cache(toolCallId: string, sessionId: string, value: unknown): void {
     this.db.prepare('INSERT OR REPLACE INTO tool_results VALUES(?,?,?)').run(toolCallId, sessionId, JSON.stringify(value));
   }
-  close(): void { this.db.close(); }
+  close(): void { try { this.db.close(); } finally { this.releaseRuntime(); } }
 }

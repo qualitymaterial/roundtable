@@ -16,7 +16,8 @@ export class KnowledgeStore {
     this.repo.put('knowledge', entry); this.repo.event(sourceSession, 'knowledge_saved', { id: entry.id, scope: entry.scope, expiresAt: entry.expiresAt }); return entry;
   }
   search(query = ''): Knowledge[] {
-    return this.repo.list<Knowledge>('knowledge').filter(k => k.scope === this.scope && Date.parse(k.expiresAt) > this.now() && k.text.toLowerCase().includes(query.toLowerCase())).slice(-50);
+    const rows = query.trim() ? this.repo.search('knowledge', this.scope, query, 50, this.now()) as Knowledge[] : this.repo.list<Knowledge>('knowledge');
+    return rows.filter(k => k.scope === this.scope && Date.parse(k.expiresAt) > this.now()).slice(-50);
   }
   read(key: string): Knowledge {
     const entry = this.repo.get<Knowledge>('knowledge', key);

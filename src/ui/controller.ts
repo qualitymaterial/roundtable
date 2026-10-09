@@ -21,6 +21,7 @@ export class PresentationController {
   private buffer = ''; private cursor = 0; private history: string[] = []; private historyIndex = 0; private historyDraft = ''; private labels: string[] = [];
   private waiting: ((line: IteratorResult<string>) => void)[] = [];
   private question?: { resolve(value: string): void; reject(error: Error): void };
+  private validator?: (value: string) => string | undefined;
   private index = 0;
   private root?: string;
   commands: () => string[] = () => [];
@@ -51,6 +52,9 @@ export class PresentationController {
     const abort = () => this.question?.reject(new Error('Cancelled')); signal?.addEventListener('abort', abort, { once: true });
     try { return await promise; }
     finally { signal?.removeEventListener('abort', abort); this.question = undefined; this.buffer = saved.buffer; this.cursor = saved.cursor; this.update({ composer: saved.composer }); }
+  };
+  askValidated = async (label: string, validate: (value: string) => string | undefined): Promise<string> => {
+    this.validator = validate; try { return await this.ask(label); } finally { this.validator = undefined; }
   };
   select = async (label: string, labels: string[]): Promise<number> => {
     if (this.question || this.state.closed) throw new Error('Input is unavailable');
@@ -83,7 +87,7 @@ export class PresentationController {
       if (key.shift || key.meta) { if (mode === 'chat') this.insert('\n'); return; }
       if (mode === 'pick' && this.buffer.trim().toLowerCase() === 'cancel') { this.question?.reject(new Error('Cancelled')); return; }
       if (mode === 'pick') { const choice = this.state.composer.choices[this.state.composer.selected]; if (choice) this.question?.resolve(String(choice.index)); return; }
-      if (this.question) { if (!this.state.composer.secret && this.buffer.trim().toLowerCase() === 'cancel') this.question.reject(new Error('Cancelled')); else this.question.resolve(this.buffer); return; }
+      if (this.question) { if (!this.state.composer.secret && this.buffer.trim().toLowerCase() === 'cancel') this.question.reject(new Error('Cancelled')); else { const error = this.validator?.(this.buffer); if (error) { this.edit({ notice: clean(error) }); return; } this.question.resolve(this.buffer); } return; }
       if (this.waiting.length) { const value = this.buffer; if (value.trim()) { this.history.push(value); if (this.history.length > 100) this.history.shift(); } this.historyIndex = this.history.length; this.buffer = ''; this.cursor = 0; this.edit({ mode: 'idle' }); this.waiting.shift()!({ value, done: false }); } return;
     }
     if (key.tab) {

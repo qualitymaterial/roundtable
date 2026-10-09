@@ -1,4 +1,11 @@
 #!/usr/bin/env node
+import { compareSessions } from './evaluation.js';
+import { researchMenu } from './research-ui.js';
+import { sandboxChanges, groupCheckpoints, reviewChanges, applyChanges, settleChanges, createWorktree, reviewWorktree, mergeWorktree, type ChangeGroup, type Worktree } from './change-groups.js';
+import { backupRuntime, restoreRuntime, cleanupRuntimeStage } from './runtime-backup.js';
+import { parseSandboxArgv, sandboxDoctor, grantSandbox, revokeSandbox, runSandbox, type SandboxGrant } from './sandbox.js';
+import { requireValidation, validateContract, recoveryReport, repairTask, type Contract } from './recovery.js';
+import { getFallback, setFallback, recoverProvider } from './provider-recovery.js';
 import { stdin, stdout } from 'node:process';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
@@ -11,7 +18,7 @@ import { ProviderRegistry } from './providers.js';
 import { PiAdapter } from './pi-adapter.js';
 import { verifyCollaboration } from './acceptance.js';
 import { mockStream, registerMock, runDemo, demoObjective, validateMemoryArtifact } from './demo.js';
-import { AgentInput, redact, type AgentRecord, type Artifact, type SessionRecord } from './domain.js';
+import { AgentInput, redact, type AgentRecord, type Artifact, type SessionRecord, type Task } from './domain.js';
 import type { ToolProvider } from './tools.js';
 import { HostAccess, hostCapabilities, normalizeHostPolicy, listCheckpoints, undoCheckpoint, previewCheckpoint } from './host-tools.js';
 import type { Approval } from './domain.js';
@@ -48,7 +55,7 @@ function projectAccessEnabled(): boolean {
   const path = join(home, 'preferences.json');
   return existsSync(path) ? z.object({ projectAccess: z.boolean() }).strict().parse(JSON.parse(readFileSync(path, 'utf8'))).projectAccess : userConfig?.projectAccess ?? false;
 }
-const inkMode = Boolean(stdin.isTTY && stdout.isTTY) && !process.argv.includes('--json') && (!process.argv[2] || ['setup', 'settings', 'login', 'endpoints', 'diagnostics', 'favorites', 'providers', 'models', 'workflow', 'demo'].includes(process.argv[2]) || process.argv[2] === 'session' && ['new', 'resume'].includes(process.argv[3] ?? ''));
+const inkMode = Boolean(stdin.isTTY && stdout.isTTY) && !process.argv.includes('--json') && (!process.argv[2] || ['setup', 'settings', 'login', 'endpoints', 'diagnostics', 'favorites', 'providers', 'models', 'workflow', 'demo', 'runtime'].includes(process.argv[2]) || process.argv[2] === 'session' && ['new', 'resume'].includes(process.argv[3] ?? ''));
 const ui = inkMode ? new InkTerminal(readSettings(home).view) : new TerminalUI(stdout, Boolean(stdout.isTTY), Boolean(stdout.isTTY) && !('NO_COLOR' in process.env), process.env.ROUNDTABLE_ASCII === '1', readSettings(home).view);
 const print = (value: unknown) => ui.print(value);
 const menu = (title: string, rows: string[], hint?: string) => ui.menu(title, rows, hint);
@@ -84,6 +91,8 @@ function transcript(engine?: Engine, repo?: Repository): (activity: unknown) => 
 const help = `Roundtable — independent agents, shared objectives
 roundtable [--agents config.json]   Start with saved agents; live admission uses provider requests
 roundtable init | doctor | providers | models [provider] | login <provider> [oauth|api_key]
+roundtable evaluate <comparison.json>   Compare recorded solo/team runs without inference
+roundtable runtime backup <file> | restore <file> <new-folder>   Encrypted offline disaster recovery
 roundtable setup | settings      Guided setup and saved configuration
 roundtable workflows | workflow <name-or-json-file> [--agents config.json]
 roundtable releases | rollback <installed-release-id>   Windows standalone releases
@@ -92,6 +101,14 @@ roundtable session new <objective> [--agents config.json]
 roundtable session list | resume [id] | export <id> [path]
 roundtable session backup <id> <path> | import <path> [project-folder]
 roundtable endpoints | diagnostics | favorites
+/research [settings|search|fetch|sources|clear-cache]   Cited research and controlled page reading
+/skill-stage <name>   Prepare a reviewed package for explicit sandbox execution
+/change-group [sandbox|review|apply|accept|undo] <id>   Review related file changes together
+/worktree [create|review|merge] <branch-or-id>   Optional Git review; no automatic commit or push
+/sandbox [grant|revoke|run]   Isolated project execution; grants expire and can be revoked
+/recovery | /task-repair <task-id> <release|reopen|cancel|dependencies> <reason>   Diagnose and repair paused work
+/require-check <json-file> | /check <contract-id> <artifact-id> | /drop-check <contract-id> <reason>   Required validation
+/fallback <agent> [provider model] | /provider-recover <agent>   Explicit provider recovery; no automatic replay
 roundtable demo                 Deterministic model fixtures using three real Pi sessions
 roundtable demo --live config.json  Three configured live providers; may incur provider charges
 roundtable demo --live config.json --check  Local configuration preflight; no inference
@@ -116,11 +133,11 @@ Interactive commands:
 /tools | /tasks | /artifacts | /artifact | /messages [search] | /activity [search]
 /settings | /model [participant] | /login [provider] [oauth|api_key] | /logout [provider]
 /mcp-reconnect [server]         Drop connections; next authorized call reconnects
-/skills [list|add|toggle|remove] | /skill:<name> <request> | /mcp [list|add|manage]
+/skills [list|add|package|inspect|toggle|remove] | /skill:<name> <request> | /mcp [list|add|manage]
 /send <name-or-id> <message> | ordinary text broadcasts to all members
 /status | /pause | /resume | /retry | /budget | /limits <JSON>
 /resolve-failure <failure-id> <reason>
-/stage | /next-stage
+/stage | /next-stage [eligible-stage-name]
 /summary | /finish <completion note> | /context [agent] | /compact <agent>
 /changes | /diff <checkpoint-id> | /undo <checkpoint-id>
 /paste                          Compose multiple lines; /end sends, /cancel-paste discards
@@ -195,7 +212,7 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
     checkImages(snapshots, recipients);
     return engine.send({ sessionId, sender: 'human', recipients: audience, type: 'human', body, ...(snapshots.length ? { attachments: snapshots.map(a => a.id) } : {}) });
   };
-  const menuIO: MenuIO = { ask: input.ask, select: input.select, print, menu };
+  const menuIO: MenuIO = { ask: input.ask, askValidated: input.askValidated, select: input.select, print, menu };
   const selectParticipant = () => choose(menuIO, 'Participant', engine.agents().filter(a => a.state !== 'removed'), a => `${a.name} (${a.provider}/${a.model}, ${a.state})`);
   const saveParticipants = () => { const entries = engine.agents().filter(a => a.state !== 'removed').map(({ name, provider, model, instructions, permissions, effort, maxOutputTokens, contextWindowTokens }) => ({ name, provider, model, instructions, permissions, effort, maxOutputTokens, contextWindowTokens })); if (entries.length) saveJson(join(home, 'agents.json'), entries); };
   const changeModel = async (reference = '', selectedModel?: ModelChoice) => {
@@ -343,6 +360,70 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
           try { await sendHuman(line); } catch (error) { repo.put('draft', { id: sessionId, sessionId, body: redact(line) } as { id: string; sessionId: string }); throw new Error(`${String(error)}. Message retained in /draft.`); } continue;
         }
         switch (command) {
+          case '/change-group': {
+            if (!words[0]) ui.menu('Change groups', repo.list<ChangeGroup>('changegroup', sessionId).map(g => g.id + ' / ' + g.state + ' / ' + g.title));
+            else if (words[0] === 'sandbox') { const group = sandboxChanges(engine, words[1]!); print('Proposed ' + group.changes.length + ' files. /change-group review ' + group.id); }
+            else if (words[0] === 'checkpoints') { const keys = (words[1] ?? await input.ask('Checkpoint IDs, separated by commas; /changes lists them')).split(',').filter(Boolean); const group = await groupCheckpoints(engine, keys, await input.ask('Change group title')); print('Grouped ' + keys.length + ' checkpoints. /change-group review ' + group.id); }
+            else if (words[0] === 'export') { const group = repo.get<ChangeGroup>('changegroup', words[1]!); if (!group || group.sessionId !== sessionId) throw new Error('Unknown group'); const path = resolve(await input.ask('File path for full group details')); writeFileSync(path, JSON.stringify(group, null, 2), { flag: 'wx', mode: 0o600 }); print('Exported full proposal to ' + path); }
+            else if (words[0] === 'review') ui.menu('Change review', await reviewChanges(engine, words[1]!));
+            else if (words[0] === 'apply') { ui.menu('Proposed changes', await reviewChanges(engine, words[1]!)); if (await choose(menuIO, 'Apply these exact files?', ['Cancel', 'Apply'], v => v) === 'Apply') { const group = await applyChanges(engine, words[1]!); print('Applied ' + group.changes.length + ' files with checkpoints. /change-group accept ' + group.id + ' or /change-group undo ' + group.id); } }
+            else if (words[0] === 'accept' || words[0] === 'undo') { const group = await settleChanges(engine, words[1]!, words[0]); print(group.title + ': ' + group.state); }
+            else throw new Error('Use sandbox, review, apply, accept or undo'); break;
+          }
+          case '/worktree': {
+            if (!words[0]) ui.menu('Managed worktrees', repo.list<Worktree>('worktree', sessionId).map(w => w.id + ' / ' + w.branch + ' / ' + w.path));
+            else if (words[0] === 'create') { const w = await createWorktree(engine, words[1]!); ui.menu('Worktree created', [w.path, 'Branch: ' + w.branch, '/worktree review ' + w.id]); }
+            else if (words[0] === 'review') print(await reviewWorktree(engine, words[1]!));
+            else if (words[0] === 'merge') { if (await choose(menuIO, 'Merge the previously reviewed commit into the project? Leaves changes uncommitted for inspection.', ['Cancel', 'Merge'], v => v) === 'Merge') print(await mergeWorktree(engine, words[1]!)); }
+            else throw new Error('Use create, review or merge'); break;
+          }
+          case '/sandbox': {
+            if (!words[0]) { print(sandboxDoctor()); ui.menu('Project sandbox grants', repo.list<SandboxGrant>('sandbox', sessionId).map(g => g.id + ' / ' + g.agentId + ' / ' + g.root + ' / ' + (g.revoked ? 'revoked' : g.expiresAt))); }
+            else if (words[0] === 'grant') {
+              const actor = participant(await input.ask('Participant name or ID')); const root = await input.ask('Project folder to copy into isolation');
+              if (await choose(menuIO, 'Allow this participant to execute Linux commands on a filtered copy of ' + root + ' for 30 minutes? No network or live project writes.', ['Cancel', 'Grant'], v => v) === 'Grant') { const grant = grantSandbox(engine, actor.id, resolve(root.replace(/^"(.*)"$/, '$1'))); ui.menu('Sandbox granted', [actor.name, grant.root, 'Expires: ' + grant.expiresAt, 'Grant: ' + grant.id, '/sandbox revoke ' + grant.id]); }
+            } else if (words[0] === 'revoke') { revokeSandbox(engine, words[1]!); print('Sandbox grant revoked. Active execution is being cancelled.'); }
+            else if (words[0] === 'run') { const grant = repo.get<SandboxGrant>('sandbox', words[1]!); if (!grant || grant.sessionId !== sessionId) throw new Error('Unknown grant'); const argv = parseSandboxArgv(rest.replace(/^run\s+\S+\s*/, '')); const result = await runSandbox(engine, grant.agentId, grant.id, argv); print(result.output); print('Exit ' + result.exitCode + '; run ' + result.runId + '; ' + result.files.length + ' changed candidates.'); }
+            else throw new Error('Use /sandbox, /sandbox grant, /sandbox revoke <id> or /sandbox run <grant-id> <argv>'); break;
+          }
+          case '/recovery': { const issues = recoveryReport(engine); ui.menu('Recovery', issues.length ? issues.flatMap(t => [t.title, t.taskId, ...t.issues]) : ['No stalled owners or unavailable dependencies detected.']); break; }
+          case '/task-repair': {
+            const [key, action, ...reason] = words;
+            if (!['release', 'reopen', 'cancel', 'dependencies'].includes(action ?? '')) throw new Error('Choose release, reopen, cancel or dependencies');
+            const dependencies = action === 'dependencies' ? (await input.ask('Dependency IDs separated by commas (blank clears)')).split(',').map(s => s.trim()).filter(Boolean) : [];
+            const repaired = repairTask(engine, key!, action as 'release' | 'reopen' | 'cancel' | 'dependencies', reason.join(' '), dependencies); print(repaired.title + ': ' + repaired.state + '. Repair recorded.'); break;
+          }
+          case '/require-check': {
+            let spec: unknown;
+            if (rest) spec = JSON.parse(readFileSync(resolve(rest.replace(/^"(.*)"$/, '$1')), 'utf8'));
+            else {
+              const task = await choose(menuIO, 'Task to validate', repo.list<Task>('task', sessionId).filter(t => !['done', 'cancelled'].includes(t.state)), t => t.title);
+              const artifactName = await input.ask('Exact deliverable artifact name'); const description = await input.ask('What must this check establish?');
+              const kind = await choose(menuIO, 'Validation method', ['json', 'text', 'sha256', 'command'] as const, k => ({ json: 'JSON required fields', text: 'Required text', sha256: 'Known SHA-256', command: 'Isolated test command' })[k]);
+              let validator: unknown;
+              if (kind === 'json') validator = { kind, required: (await input.ask('Required top-level fields, separated by commas')).split(',').map(s => s.trim()).filter(Boolean) };
+              else if (kind === 'text') validator = { kind, includes: [await input.ask('Text that must be present')] };
+              else if (kind === 'sha256') validator = { kind, hash: await input.ask('Expected SHA-256') };
+              else { const grant = await choose(menuIO, 'Reviewer sandbox', repo.list<SandboxGrant>('sandbox', sessionId).filter(g => !g.revoked && Date.parse(g.expiresAt) > Date.now()), g => (engine.agents().find(a => a.id === g.agentId)?.name ?? g.agentId) + ' / ' + g.root); validator = { kind, grantId: grant.id, argv: parseSandboxArgv(await input.ask('Linux test command; use {artifact} for the exact artifact file')) }; }
+              spec = { taskId: task.id, artifactName, description, validator };
+            }
+            const contract = requireValidation(engine, spec); ui.menu('Required check saved', [contract.description, 'Artifact: ' + contract.artifactName, 'Check: ' + contract.id, '/check ' + contract.id + ' <artifact-id>']); break;
+          }
+          case '/check': { const result = await validateContract(engine, words[0]!, words[1]!, 'human'); ui.menu(result.passed ? 'Validation passed' : 'Validation failed', [result.detail, 'Artifact SHA-256: ' + result.hash]); break; }
+          case '/drop-check': {
+            const contract = repo.get<Contract>('contract', words[0]!); const reason = words.slice(1).join(' ');
+            if (!contract?.active || contract.sessionId !== sessionId || !reason.trim()) throw new Error('Choose an active check and supply a removal reason');
+            contract.active = false; repo.put('contract', contract); repo.event(sessionId, 'human_validation_removed', { contractId: contract.id, reason: redact(reason) }); print('Requirement removed with an audit record.'); break;
+          }
+          case '/fallback': {
+            const actor = participant(target); const parts = targetRest.split(/\s+/).filter(Boolean);
+            if (parts.length) { if (parts.length !== 2) throw new Error('Use /fallback <agent> <provider> <model>'); const saved = setFallback(engine, actor.id, parts[0]!, parts[1]!); print('Fallback saved: ' + saved.provider + '/' + saved.model + '. Run /fallback ' + actor.id + ' to review and switch.'); }
+            else { let next = getFallback(engine, actor.id); if (!next) { const selected = await selectModel(registry, menuIO); next = setFallback(engine, actor.id, selected.provider, selected.id); }
+              if (await choose(menuIO, 'Switch to ' + next.provider + '/' + next.model + '? Existing participant history will be sent to this provider on future requests.', ['Cancel', 'Switch provider; keep failed deliveries for review'], value => value) !== 'Cancel') { await recoverProvider(engine, actor.id, true); print('Fallback connected. Review /summary before /retry; prior tool effects are not undone.'); } }
+            break;
+          }
+          case '/provider-recover': await recoverProvider(engine, participant(target).id); print('Provider reconnected. Review /summary before /retry.'); break;
+
           case '/view': {
             const view = rest || await choose(menuIO, 'Display', ['compact', 'verbose'] as const, v => v);
             if (view !== 'compact' && view !== 'verbose') throw new Error('Use /view compact or /view verbose');
@@ -454,8 +535,8 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
             await engine.pause('Archived by human'); const s = engine.session(); s.archived = true; repo.put('session', s); print('Archived. You can still resume it by session ID.'); return undefined;
           }
           case '/help': print(help); break;
-          case '/stage': print(stageStatus(engine) ?? 'Free collaboration: no stage gates.'); break;
-          case '/next-stage': advanceStage(engine); print('Stage approved.'); break;
+          case '/stage': { const stage = stageStatus(engine); if (!stage) print('Free collaboration: no stage gates.'); else ui.menu('Workflow', [stage.current?.name ?? 'All stages approved', stage.current?.objective ?? '', ...stage.blockers, 'Waiting: ' + stage.waiting.map(id => engine.agents().find(a => a.id === id)?.name ?? id).join(', '), ...stage.history.map(h => 'Approved: ' + h.name)]); break; }
+          case '/next-stage': advanceStage(engine, rest || undefined); print('Stage approved.'); break;
           case '/settings': await settingsMenu(); break;
           case '/tuning': {
             const a = await selectParticipant(); const m = registry.model(a.provider, a.model);
@@ -479,6 +560,13 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
             const provider = words[0] ?? (await choose(menuIO, 'Provider', registry.providers().filter(p => p.configured), p => p.id)).id;
             print('Logout removes only Roundtable-stored authentication. Environment keys and provider-side access remain.');
             if ((await input.ask(`Log out ${provider}? [y/N]`)).toLowerCase() === 'y') { await registry.runtime.logout(provider); print('Stored authentication removed.'); } break;
+          }
+          case '/research': await researchMenu(home, engine, menuIO, rest); break;
+          case '/skill-stage': {
+            const skills = new Skills(home); const name = rest || (await choose(menuIO, 'Skill package', skills.list().filter(s => s.enabled && s.files), s => s.name)).name;
+            const candidate = skills.read(name, true); ui.menu('Package staging', candidate.files?.map(f => f.path + ' / ' + f.hash) ?? []);
+            if (await choose(menuIO, 'Copy this reviewed package into the shared workspace? No scripts run.', ['Cancel', 'Stage'], s => s) === 'Stage') { const root = skills.stage(name, engine.session().workspace); ui.menu('Skill package staged', [root, 'Use /sandbox grant for this exact folder, then /sandbox run or let the granted participant invoke sandbox_execute.']); }
+            break;
           }
           case '/skills': await skillsMenu(home, menuIO, rest); break;
           case '/mcp': await mcpMenu(home, menuIO, rest); await engine.connections.disconnect(); break;
@@ -563,7 +651,7 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
           case '/resolve-failure': resolveFailure(engine, words[0]!, words.slice(1).join(' ')); print('Resolution recorded; the original failure remains in the audit history.'); break;
           case '/usage': if (rest === '--json') print(usageReport(engine)); else ui.menu('Usage / provider tokens and estimated cost', usageView(engine)); break;
           case '/remember': print(knowledge.remember(rest, sessionId)); break;
-          case '/memory': print({ project: knowledge.scope, entries: knowledge.search(rest), note: 'Human-curated, 30-day project memory. Nothing is sent to models until /share-memory.' }); break;
+          case '/memory': ui.menu('Project memory', [knowledge.scope, ...knowledge.search(rest).flatMap(k => [k.id + ' / expires ' + k.expiresAt, k.text]), 'Nothing is sent to models until /share-memory.']); break;
           case '/forget': knowledge.forget(rest); print('Memory deleted. Prior messages and backups may still contain shared copies.'); break;
           case '/share-memory': {
             const note = knowledge.read(rest);
@@ -643,8 +731,19 @@ async function main(): Promise<void> {
   if (command === 'workflows') { print(workflows()); return; }
   if (command === 'releases') { print(new WindowsReleases().list()); return; }
   if (command === 'rollback') { print(new WindowsReleases().activate(subcommand ?? '')); return; }
+  if (command === 'runtime') {
+    if (subcommand === 'cleanup') { cleanupRuntimeStage(resolve(args[2]!)); print('Removed interrupted backup/restore stage.'); return; }
+    if (!stdin.isTTY || !stdout.isTTY) throw new Error('Runtime backup commands require an interactive terminal for hidden passphrase entry');
+    const input = terminalInput();
+    try { const password = await input.ask('Backup passphrase (minimum 12 characters; never stored)', true);
+      if (subcommand === 'backup') { if (await input.ask('Confirm backup passphrase', true) !== password) throw new Error('Passphrases differ'); const backup = backupRuntime(home, resolve(args[2]!), password); ui.menu('Encrypted runtime backup saved', [backup.path, backup.files + ' files / ' + (backup.bytes / 1024 / 1024).toFixed(1) + ' MiB before encryption', 'Keep the passphrase separately; it cannot be recovered.']); }
+      else if (subcommand === 'restore') { const restored = restoreRuntime(resolve(args[2]!), resolve(args[3]!), password); ui.menu('Runtime restored', [restored.home, restored.files + ' files verified', 'Sessions are paused; execution grants are disabled. Review before resuming.', 'Set ROUNDTABLE_HOME to this folder to open the restored runtime.']); }
+      else throw new Error('Use runtime backup <file> or runtime restore <file> <new-folder>');
+    } finally { input.rl.close(); } return;
+  }
   mkdirSync(home, { recursive: true }); const repo = new Repository(join(home, 'roundtable.db'));
   try {
+    if (command === 'evaluate') { if (!subcommand) throw new Error('Supply a comparison JSON file with task, solo and team session IDs'); print(compareSessions(repo, JSON.parse(readFileSync(resolve(subcommand), 'utf8')))); return; }
     if (command === 'init') {
       const path = join(home, 'endpoints.example.json');
       if (!existsSync(path)) writeFileSync(path, JSON.stringify([{ provider: 'local', baseUrl: 'http://127.0.0.1:1234/v1', model: 'REPLACE_WITH_SERVER_MODEL_ID', apiKeyEnv: 'LOCAL_API_KEY', contextWindow: 32000, maxTokens: 4096 }], null, 2));
@@ -686,7 +785,7 @@ async function main(): Promise<void> {
     if (command === 'validate') { const artifact = repo.list<Artifact>('artifact', subcommand!)[0]; if (!artifact) throw new Error('No artifact in session'); print(validateMemoryArtifact(artifact)); return; }
     const registry = await ProviderRegistry.create(home);
     if (['endpoints', 'diagnostics', 'favorites'].includes(command ?? '')) {
-      const input = terminalInput(); const io = { ask: input.ask, select: input.select, print, menu };
+      const input = terminalInput(); const io = { ask: input.ask, askValidated: input.askValidated, select: input.select, print, menu };
       try {
         if (command === 'endpoints') await endpointMenu(registry, io);
         else if (command === 'favorites') await favoritesMenu(registry, io);
@@ -711,12 +810,12 @@ async function main(): Promise<void> {
       return;
     }
     if (command === 'settings') {
-      const input = terminalInput(); const io = { ask: input.ask, select: input.select, print, menu };
+      const input = terminalInput(); const io = { ask: input.ask, askValidated: input.askValidated, select: input.select, print, menu };
       try {
         const saved = readSettings(home); ui.settings(saved.limits, saved.openBrowser, home);
         const action = await choose(io, 'Saved settings', ['login', 'participants and folder access', 'default limits', 'browser opening', 'MCP connections', 'skills', 'back', 'model favorites', 'local/custom endpoint', 'connection diagnostics'], s => s);
         if (action === 'login') await login(registry, undefined, undefined, input);
-        else if (action === 'participants and folder access') await setup(registry, process.cwd(), { ask: input.ask, select: input.select, print, login: (p, m) => login(registry, p, m, input) });
+        else if (action === 'participants and folder access') await setup(registry, process.cwd(), { ask: input.ask, askValidated: input.askValidated, select: input.select, print, login: (p, m) => login(registry, p, m, input) });
         else if (action === 'default limits') saveSettings(home, { ...saved, limits: { ...saved.limits, ...await editLimit(io, saved.limits) } });
         else if (action === 'browser opening') saveSettings(home, { ...saved, openBrowser: !saved.openBrowser });
         else if (action === 'MCP connections') await mcpMenu(home, io);
@@ -739,7 +838,7 @@ async function main(): Promise<void> {
         menu(command === 'providers' ? 'Providers' : 'Models', command === 'providers' ? registry.providers().map(providerRow) : registry.models(provider).map(m => `${m.provider} / ${modelRow(m)}`), 'Run in a terminal to browse interactively. --json exports structured data.');
       } else {
         const input = terminalInput();
-        try { await providerBrowser(registry, { ask: input.ask, select: input.select, print, menu }, { login: p => login(registry, p, undefined, input) }, provider, command === 'models'); }
+        try { await providerBrowser(registry, { ask: input.ask, askValidated: input.askValidated, select: input.select, print, menu }, { login: p => login(registry, p, undefined, input) }, provider, command === 'models'); }
         finally { input.rl.close(); }
       }
       return;
@@ -769,7 +868,7 @@ async function main(): Promise<void> {
     if (!command && stdin.isTTY && !configs.length) { await guidedSetup(registry); configs = startupAgents(registry, configPath); }
     if (command === 'session' && subcommand === 'resume') {
       input = terminalInput();
-      try { sessionId = args[2] ?? await sessionPicker(repo, { ask: input.ask, select: input.select, print, menu }); }
+      try { sessionId = args[2] ?? await sessionPicker(repo, { ask: input.ask, askValidated: input.askValidated, select: input.select, print, menu }); }
       catch (error) { input.rl.close(); throw error; }
     }
     else if (command === 'session' && subcommand === 'new') sessionId = createSession(repo, args.slice(2).join(' ') || 'Explore a shared objective').id;

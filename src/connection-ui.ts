@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { choose, type MenuIO } from './input.js';
+import { choose, askValidated, fieldError, type MenuIO } from './input.js';
 import { searchChoose } from './navigation.js';
 import { EndpointConfig, EndpointModel, type ProviderRegistry } from './providers.js';
 import { Connections } from './connections.js';
@@ -22,15 +22,15 @@ export async function discoverModels(baseUrl: string, apiKeyEnv?: string): Promi
 export async function endpointWizard(registry: ProviderRegistry, io: MenuIO): Promise<void> {
   const template = await choose(io, 'OpenAI-compatible endpoint', ['LM Studio', 'Ollama', 'custom'], s => s);
   const defaults = template === 'LM Studio' ? 'http://127.0.0.1:1234/v1' : template === 'Ollama' ? 'http://127.0.0.1:11434/v1' : '';
-  const baseUrl = (await io.ask(`Base URL${defaults ? ` [${defaults}]` : ' (including /v1 if required)'}`)).trim() || defaults;
+  const baseUrl = (await askValidated(io, `Base URL${defaults ? ` [${defaults}]` : ' (including /v1 if required)'}`, value => { try { const url = new URL(value.trim() || defaults); if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return 'Use HTTP(S) without embedded credentials'; return undefined; } catch { return 'Enter a valid HTTP(S) server URL'; } })).trim() || defaults;
   const apiKeyEnv = (await io.ask('API key environment variable NAME (blank for unauthenticated loopback only)')).trim() || undefined;
   EndpointConfig.parse({ provider: 'validation', baseUrl, apiKeyEnv, model: 'validation' });
   let model: string;
   if ((await io.ask('Fetch model IDs from this server now? [y/N]')).toLowerCase() === 'y') model = await searchChoose(io, 'Server models', await discoverModels(baseUrl, apiKeyEnv), s => s);
   else model = (await io.ask('Exact model ID from your server')).trim();
   const provider = (await io.ask('Unique provider alias (e.g. studio-local)')).trim();
-  const contextWindow = Number((await io.ask('Context window supported by your server [32000]')).trim() || '32000');
-  const maxTokens = Number((await io.ask('Maximum output tokens [4096]')).trim() || '4096');
+  const contextWindow = Number((await askValidated(io, 'Context window supported by your server [32000]', value => { try { EndpointModel.parse({ id: model, contextWindow: Number(value || 32000), maxTokens: 1 }); return undefined; } catch (error) { return fieldError(error); } })).trim() || '32000');
+  const maxTokens = Number((await askValidated(io, 'Maximum output tokens [4096]', value => { try { EndpointModel.parse({ id: model, contextWindow, maxTokens: Number(value || 4096) }); return undefined; } catch (error) { return fieldError(error); } })).trim() || '4096');
   const config = EndpointConfig.parse({ provider, baseUrl, apiKeyEnv, model, contextWindow, maxTokens });
   endpointSummary(io, config); io.print('Custom pricing is unknown; zero catalog prices do not prove inference is free. Tool support is checked on admission.');
   if ((await io.ask('Save and register this endpoint? [y/N]')).toLowerCase() !== 'y') return;

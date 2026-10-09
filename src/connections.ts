@@ -1,3 +1,4 @@
+import { oauthAdapter, oauthFetch, oauthState } from './mcp-auth.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
@@ -9,7 +10,7 @@ import { createHash } from 'node:crypto';
 const envName = z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/);
 const common = { id: z.string().regex(/^[a-z][a-z0-9-]{0,63}$/), enabled: z.boolean().default(false), tools: z.array(z.string().min(1).max(100)).max(200).default([]), resources: z.array(z.string().min(1).max(2000)).max(200).default([]) };
 export const Connection = z.discriminatedUnion('type', [
-  z.object({ ...common, type: z.literal('http'), url: z.url().refine(raw => { const u = new URL(raw); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password; }, 'Use HTTP(S) without embedded credentials'), tokenEnv: envName.optional() }).strict(),
+  z.object({ ...common, type: z.literal('http'), url: z.url().refine(raw => { const u = new URL(raw); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password; }, 'Use HTTP(S) without embedded credentials'), tokenEnv: envName.optional(), oauth: z.boolean().default(false), clientId: z.string().min(1).max(1000).optional() }).strict(),
   z.object({ ...common, type: z.literal('stdio'), command: z.string().min(1).max(2000), args: z.array(z.string().max(4000)).max(40).default([]), cwd: z.string().min(1), envVars: z.array(envName).max(32).default([]) }).strict(),
 ]);
 export type Connection = z.output<typeof Connection>;
@@ -38,8 +39,9 @@ export class Connections {
   protected async open(config: Connection, signal: AbortSignal): Promise<McpClient> {
     signal.throwIfAborted(); const client = new McpClient({ name: 'roundtable', version: VERSION, requestTimeoutMs: 15000 });
     const transport = config.type === 'http' ? new StreamableHttpTransport({ url: config.url, openGetStream: false, maxMessageBytes: 65536,
-      headers: config.tokenEnv && process.env[config.tokenEnv] ? { Authorization: `Bearer ${process.env[config.tokenEnv]}` } : undefined,
-      fetch: (input, init) => { if (new URL(input).href !== new URL(config.url).href) throw new Error('MCP attempted an unconfigured endpoint'); return fetch(input, { ...init, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(15000), ...(init?.signal ? [init.signal] : [])]) }); },
+      authProvider: config.oauth ? oauthAdapter(this.home, config) : undefined,
+      headers: !config.oauth && config.tokenEnv && process.env[config.tokenEnv] ? { Authorization: `Bearer ${process.env[config.tokenEnv]}` } : undefined,
+      fetch: (input, init) => { if (config.oauth) return oauthFetch(oauthState(this.home, config)?.origins ?? [new URL(config.url).origin], signal)(input, init); if (new URL(input).href !== new URL(config.url).href) throw new Error('MCP attempted an unconfigured endpoint'); return fetch(input, { ...init, redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(15000), ...(init?.signal ? [init.signal] : [])]) }); },
     }) : new StdioTransport({ command: config.command, args: config.args, cwd: config.cwd, inheritEnv: false,
       env: Object.fromEntries(Object.entries(process.env).filter(([key, value]) => value !== undefined && (/^(PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|LANG)$/i.test(key) || config.envVars.includes(key)))) as Record<string, string>,
       stderr: 'pipe', maxStderrBytes: 4096, maxMessageBytes: 65536, closeTimeoutMs: 1000 });
@@ -69,7 +71,7 @@ export class ConnectionPool extends Connections {
     signal.throwIfAborted(); if (this.closed) throw new Error('MCP pool is closed');
     const config = this.get(requested.id);
     if (JSON.stringify(config) !== JSON.stringify(requested)) throw new Error('MCP configuration changed; inspect before retrying');
-    const credential = config.type === 'http' ? process.env[config.tokenEnv ?? ''] : config.envVars.map(key => process.env[key]);
+    const credential = config.type === 'http' ? config.oauth ? oauthState(this.home, config)?.state.tokens : process.env[config.tokenEnv ?? ''] : config.envVars.map(key => process.env[key]);
     const key = createHash('sha256').update(JSON.stringify({ owner, config, credential })).digest('hex');
     for (const old of this.leases.values()) if (old.owner === owner && old.server === config.id && old.key !== key) await this.drop(old);
     let lease = this.leases.get(key);

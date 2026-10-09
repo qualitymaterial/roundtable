@@ -47,7 +47,7 @@ export type SessionRecord = {
   usage: { exchanges: number; toolCalls: number; requests: number; tokens: number; dollars: number };
   providerRequests: Record<string, number>;
 };
-export type Task = { id: string; sessionId: string; title: string; state: 'open' | 'claimed' | 'done' | 'cancelled'; owner?: string; findings: string; dependencies: string[] };
+export type Task = { id: string; sessionId: string; title: string; state: 'open' | 'claimed' | 'done' | 'cancelled'; owner?: string; findings: string; dependencies: string[]; updatedAt?: string };
 export type Artifact = { id: string; sessionId: string; name: string; content: string; hash: string; author: string; createdAt: string; provenance: string; encoding?: 'base64'; mimeType?: string; bytes?: number };
 export type Approval = { id: string; sessionId: string; agentId: string; capability: string; reason: string; state: 'pending' | 'approved' | 'rejected' | 'consumed'; command?: { text: string; cwd: string; fingerprint: string; background?: boolean; timeoutMs?: number } };
 export type Note = { id: string; sessionId: string; author: string; text: string; kind: 'note' | 'decision'; timestamp: string };
@@ -64,11 +64,14 @@ export interface AgentAdapter {
 export interface ApprovalProvider { decide(id: string, approve: boolean): void }
 export interface CollaborationPolicy { eligible(agent: AgentRecord, session: SessionRecord): boolean }
 
+const runtimeSecrets = new Set<string>();
+export function protectSecret(value: string | undefined): void { if (value && value.length >= 8) runtimeSecrets.add(value); }
 // Redact known environment credentials and common token formats before persistence/display.
 export function redact(value: string): string {
   let result = value.replace(/\b(?:sk-[A-Za-z0-9_-]{12,}|Bearer\s+[A-Za-z0-9._-]{8,})/gi, '[REDACTED]');
   for (const [key, secret] of Object.entries(process.env)) {
     if (/(KEY|TOKEN|SECRET|PASSWORD)/i.test(key) && secret && secret.length >= 8) result = result.split(secret).join('[REDACTED]');
   }
+  for (const secret of runtimeSecrets) result = result.split(secret).join('[REDACTED]');
   return result;
 }

@@ -4,7 +4,7 @@ import { AgentInput, id } from './domain.js';
 import { normalizeHostPolicy } from './host-tools.js';
 import type { ProviderRegistry } from './providers.js';
 
-export interface SetupIO { select?(label: string, choices: string[]): Promise<number>; ask(label: string): Promise<string>; print(text: string): void; login(provider: string, method: 'oauth' | 'api_key'): Promise<void> }
+export interface SetupIO { askValidated?(label: string, validate: (value: string) => string | undefined): Promise<string>; select?(label: string, choices: string[]): Promise<number>; ask(label: string): Promise<string>; print(text: string): void; login(provider: string, method: 'oauth' | 'api_key'): Promise<void> }
 export function saveJson(path: string, value: unknown): void {
   const temporary = `${path}.${id()}.tmp`;
   writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); renameSync(temporary, path);

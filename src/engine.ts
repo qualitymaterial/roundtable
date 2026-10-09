@@ -1,3 +1,6 @@
+import { providerFailure } from './provider-recovery.js';
+import { installSandboxTools } from './sandbox.js';
+import { installRecoveryTools } from './recovery.js';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, realpathSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
@@ -10,7 +13,7 @@ import { ConnectionPool } from './connections.js';
 import { BackgroundJobs } from './jobs.js';
 import { budgetMetrics, budgetReason, exhaustedBudgets, budgetHelp } from './budgets.js';
 import { Attachments } from './attachments.js';
-import { Stage, stageStatus } from './policy.js';
+import { Stage, stageStatus, validateStages } from './policy.js';
 import { acquireSession } from './session-lock.js';
 import { AgentInput, Limits, MessageInput, id, timestamp, redact, type AgentAdapter, type AgentRecord, type Approval, type Message, type MessageDraft, type SessionRecord, type Task } from './domain.js';
 
@@ -41,7 +44,7 @@ export class Engine extends EventEmitter {
     this.jobs = new BackgroundJobs(repo, sessionId, executeHost, recover, job => this.notify(job.agentId, `job:${job.id}`, `Background job ${job.id} finished: ${job.state}. Inspect host_job_read for its actual result before reporting success.`));
     for (const job of this.jobs.list().filter(j => j.state === 'interrupted')) this.notify(job.agentId, `job:${job.id}`, `Background job ${job.id} was interrupted by process exit. Inspect its output; do not assume it completed or automatically rerun side effects.`);
     this.connections = new ConnectionPool(dirname(repo.path));
-    this.tools = new ToolRegistry(this); installTools(this.tools); installNetworkTools(this.tools); installHostTools(this.tools);
+    this.tools = new ToolRegistry(this); installTools(this.tools); installNetworkTools(this.tools); installHostTools(this.tools); installRecoveryTools(this.tools); installSandboxTools(this.tools);
   }
   static create(repo: Repository, workspaceRoot: string, objective: string, options: { stages?: z.input<typeof Stage>[]; projectRoot?: string; limits?: z.input<typeof Limits>; policy?: SessionRecord['policy']; constraints?: string; permissions?: string[] } = {}): SessionRecord {
     if (!objective.trim() || objective.length > 12000) throw new Error('Objective must be 1–12000 characters');
@@ -49,7 +52,7 @@ export class Engine extends EventEmitter {
     const record: SessionRecord = { id: sessionId, projectRoot: realpathSync(options.projectRoot ?? workspace), objective: redact(objective), policy: options.policy ?? 'goal', constraints: options.constraints ?? '', createdAt: timestamp(), state: 'active', workspace,
       permissions: options.permissions ?? ['collaborate', 'memory', 'artifact', 'workspace.read', 'workspace.write', 'git.read', 'execute.container', 'network.research', 'mcp.remote'], limits: Limits.parse(options.limits ?? {}),
       usage: { exchanges: 0, toolCalls: 0, requests: 0, tokens: 0, dollars: 0 }, providerRequests: {} };
-    if (options.stages?.length) record.workflow = { stages: z.array(Stage).min(1).max(20).parse(options.stages), index: 0, ready: [], startedAt: timestamp(), artifactIds: [], history: [] };
+    if (options.stages?.length) record.workflow = { stages: validateStages(options.stages), index: 0, ready: [], startedAt: timestamp(), artifactIds: [], history: [] };
     repo.put('session', record); repo.event(sessionId, 'session_created', record); return record;
   }
   session(): SessionRecord { const record = this.repo.get<SessionRecord>('session', this.sessionId); if (!record) throw new Error('Session not found'); return record; }
@@ -361,7 +364,7 @@ export class Engine extends EventEmitter {
       const paused = this.session().state !== 'active' || this.closing || this.repo.get<AgentRecord>('agent', agent.id)?.state !== 'active';
       this.repo.delivery(message.id, agent.id, paused ? 'pending' : 'failed', String(error));
       this.repo.event(this.sessionId, paused ? 'delivery_interrupted' : 'delivery_error', { agentId: agent.id, messageId: message.id, error: redact(String(error)) });
-      if (!paused) this.emit('activity', { type: 'error', agentId: agent.id, error: redact(String(error)) });
+      if (!paused) { const failure = providerFailure(error); this.repo.event(this.sessionId, 'provider_recovery_needed', { agentId: agent.id, ...failure }); this.emit('activity', { type: 'error', agentId: agent.id, error: `${failure.message}\n${failure.advice}` }); }
     } finally {
       clearTimeout(timer); adapter.clearSteering?.();
       for (const record of this.repo.list<Steering>('steering', this.sessionId).filter(s => s.agentId === agent.id && s.state === 'queued')) this.releaseSteering(record);

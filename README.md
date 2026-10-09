@@ -151,3 +151,19 @@ See [architecture](docs/ARCHITECTURE.md), [protocol](docs/PROTOCOL.md), [agents]
 ### Ink terminal (0.2.0-dev.8)
 
 Run `roundtable` for the conversation-first Ink interface. Type `/settings` for searchable keyboard menus. Tool activity stays grouped, and finished messages remain in scrollback. `/steer` updates a running participant at its next tool boundary; `/pause` interrupts. PDF/Office attachments, binary artifact export and per-agent MCP connection reuse are included. No live account or permission behavior is bypassed by the UI. See [terminal controls](docs/TERMINAL.md) and [implemented versus remaining work](docs/IMPLEMENTATION_CHECKLIST.md).
+
+## Sprint 1 — dev.10
+
+Required artifact checks, task repair, project sandbox execution, grouped file/Git review, explicit provider fallback and encrypted runtime backup/restore are implemented. See [docs/SPRINT_1.md](docs/SPRINT_1.md) for setup and workflows. Windows sandbox execution uses an existing WSL Ubuntu installation with Bubblewrap; missing isolation fails closed. No additional cloud service or paid-model test is required.
+
+
+### Sprint 2 commands
+
+The installed dev.11 harness adds readable Markdown and change previews, reviewed skill packages, MCP browser authentication, cited research and full-text memory search. See [Sprint 2](docs/SPRINT_2.md) for setup and limits.
+
+- `/skills package`, `/skills inspect`, `/skill-stage <name>`: review supporting files and prepare explicitly authorized sandbox execution.
+- `/mcp manage`: browser OAuth, tool/resource allowlists and resource templates.
+- `/research settings`: configure a SearXNG/JSON search server and allowed page origins; then `/research search`, `/research fetch`, `/research sources`.
+- `/memory <words>`: ranked project memory search; `/share-memory` remains explicit.
+- `/stage`, `/next-stage [name]`: inspect requirements and approve an eligible workflow stage.
+- `roundtable evaluate comparison.json`: compare already-recorded solo/team evidence without starting model calls.

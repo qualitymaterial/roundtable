@@ -1,3 +1,5 @@
+import { researchConfig } from './research.js';
+import { taskValidation } from './recovery.js';
 import { Type, type Static, type TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -35,8 +37,10 @@ export class ToolRegistry implements ToolExecutor {
   remove(name: string): void { this.entries.delete(name); }
   private configured(name: string): boolean {
     if (name.startsWith('container_')) return Boolean(process.env.ROUNDTABLE_CONTAINER_IMAGE);
+    if (name === 'web_search') return Boolean(researchConfig(dirname(this.engine.repo.path)).searchUrl);
+    if (name === 'web_fetch') return researchConfig(dirname(this.engine.repo.path)).fetchOrigins.length > 0;
     if (name === 'web_research') return Boolean(process.env.ROUNDTABLE_RESEARCH_URL);
-    if (['mcp_call', 'mcp_tools_list', 'mcp_resources_list', 'mcp_resource_read'].includes(name)) return new Connections(dirname(this.engine.repo.path)).list().some(c => c.enabled);
+    if (['mcp_call', 'mcp_tools_list', 'mcp_resources_list', 'mcp_resource_read', 'mcp_resource_templates'].includes(name)) return new Connections(dirname(this.engine.repo.path)).list().some(c => c.enabled);
     return true;
   }
   activeNames(agent: AgentRecord): string[] {
@@ -100,7 +104,7 @@ export class ToolRegistry implements ToolExecutor {
     }));
   }
   private fingerprint(name: string, args: unknown): string {
-    return createHash('sha256').update(JSON.stringify({ name, args, ...(name.startsWith('host_') ? { hostAccess: this.engine.session().hostAccess ?? null } : {}), ...(name.startsWith('mcp_') ? { connections: new Connections(dirname(this.engine.repo.path)).list() } : {}), ...(name.startsWith('roundtable_skill') ? { skills: new Skills(dirname(this.engine.repo.path)).list() } : {}) })).digest('hex');
+    return createHash('sha256').update(JSON.stringify({ name, args, ...(['web_search', 'web_fetch'].includes(name) ? { research: researchConfig(dirname(this.engine.repo.path)) } : {}), ...(name.startsWith('host_') ? { hostAccess: this.engine.session().hostAccess ?? null } : {}), ...(name.startsWith('mcp_') ? { connections: new Connections(dirname(this.engine.repo.path)).list() } : {}), ...(name.startsWith('roundtable_skill') ? { skills: new Skills(dirname(this.engine.repo.path)).list().map(({ files, ...skill }) => ({ ...skill, files: files?.map(f => ({ path: f.path, hash: f.hash })) })) } : {}) })).digest('hex');
   }
 }
 
@@ -126,7 +130,8 @@ export function installTools(registry: ToolRegistry): void {
   const engine = registry.engine;
   const skills = new Skills(dirname(engine.repo.path));
   registry.register('roundtable_skills_list', 'Discover human-installed instruction skills. Skills grant no permissions and do not execute scripts.', Type.Object({}), 'collaborate', () => skills.list().filter(s => s.enabled && !s.manualOnly).map(s => ({ name: s.name, description: s.description, hash: s.hash })));
-  registry.register('roundtable_skill_read', 'Read an explicitly installed skill snapshot. Any referenced scripts still require normal tool permissions and approvals.', Type.Object({ name: Type.String() }), 'collaborate', ({ name }) => skills.read(name));
+  registry.register('roundtable_skill_read', 'Read an explicitly installed skill snapshot. Any referenced scripts still require normal tool permissions and approvals.', Type.Object({ name: Type.String() }), 'collaborate', ({ name }) => { const s = skills.read(name); return { ...s, files: s.files?.map(f => ({ path: f.path, hash: f.hash })) }; });
+  registry.register('roundtable_skill_file', 'Read an integrity-checked file from a human-reviewed skill package. This does not execute code or grant permissions.', Type.Object({ name: Type.String(), path: Type.String() }), 'collaborate', ({ name, path }) => skills.file(name, path));
   const artifacts = new SQLiteArtifactStore(engine.repo);
   const local = <T extends { sessionId: string }>(kind: 'task' | 'artifact', entityId: string): T => {
     const value = engine.repo.get<T>(kind, entityId);
@@ -151,7 +156,7 @@ export function installTools(registry: ToolRegistry): void {
     const task = local<Task>('task', args.taskId);
     if (task.state !== 'open') throw new Error('Task is not open');
     if (task.dependencies.some(d => local<Task>('task', d).state !== 'done')) throw new Error('Task dependencies are incomplete');
-    task.state = 'claimed'; task.owner = agent.id; engine.repo.put('task', task); engine.repo.event(engine.sessionId, 'task_claimed', task); return task;
+    task.state = 'claimed'; task.owner = agent.id; task.updatedAt = timestamp(); engine.repo.put('task', task); engine.repo.event(engine.sessionId, 'task_claimed', task); return task;
   }));
   registry.register('roundtable_task_update', 'Append findings from any collaborator. Only the owner may complete or reopen a claimed task.', Type.Object({ taskId: text(100), findings: text(), state: Type.Optional(Type.Union(['open', 'done', 'cancelled'].map(s => Type.Literal(s)))) }), 'collaborate', (args, { agent }) => {
     const task = local<Task>('task', args.taskId);
@@ -159,7 +164,9 @@ export function installTools(registry: ToolRegistry): void {
     if (args.state && (task.state !== 'claimed' || task.owner !== agent.id)) throw new Error('Only the current owner can transition a claimed task');
     if (task.findings.length + args.findings.length > 48000) throw new Error('Task findings limit reached');
     task.findings += `\n${agent.name}: ${redact(args.findings)}`;
-    if (args.state) task.state = args.state;
+    if (args.state === 'done' && task.dependencies.some(key => local<Task>('task', key).state !== 'done')) throw new Error('Task dependencies are incomplete');
+    if (args.state === 'done' && taskValidation(engine, task.id).some(c => !c.passed)) throw new Error('Required independent validation has not passed. Use roundtable_task_requirements.');
+    task.updatedAt = timestamp(); if (args.state) task.state = args.state;
     if (args.state === 'open') delete task.owner;
     engine.repo.put('task', task); engine.repo.event(engine.sessionId, 'task_updated', task); return task;
   });
@@ -207,7 +214,7 @@ export function installTools(registry: ToolRegistry): void {
     const note: Note = { ...args, text: redact(args.text), kind: args.kind ?? 'note', id: id(), sessionId: engine.sessionId, author: agent.id, timestamp: timestamp() };
     engine.repo.put('note', note); engine.repo.event(engine.sessionId, 'memory_written', { id: note.id, author: note.author }); return note;
   });
-  registry.register('roundtable_memory_search', 'Search persistent session notes by case-insensitive substring.', Type.Object({ query: text(300), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30 })) }), 'memory', args => engine.repo.list<Note>('note', engine.sessionId).filter(n => n.text.toLowerCase().includes(args.query.toLowerCase())).slice(-(args.limit ?? 10)));
+  registry.register('roundtable_memory_search', 'Search persistent session notes with ranked Unicode full-text token/prefix matching.', Type.Object({ query: text(300), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 30 })) }), 'memory', args => engine.repo.search('note', engine.sessionId, args.query, args.limit ?? 10));
   registry.register('roundtable_session_status', 'Inspect objective, policy, budgets and pending deliveries.', empty, 'collaborate', () => engine.status());
   registry.register('workspace_read', 'Read UTF-8 text and its SHA-256 for a guarded workspace edit (maximum 64 KiB).', Type.Object({ path: text(500) }), 'workspace.read', async args => {
     const path = await workspacePath(engine.session().workspace, args.path);
