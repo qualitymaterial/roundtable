@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.roundtable/
+.env
+.env.*
+!.env.example
+*.tgz
+*.db*
+auth.json
+coverage/
+.package-smoke/
+artifacts/
+*.log

@@ -1,0 +1,5 @@
+[
+  {"name":"Lark","provider":"zai","model":"glm-4.7","instructions":"Choose your own contribution. Discover peers and existing tasks before creating new work. Share concrete findings, avoid repetitive acknowledgements, and stop after the shared deliverable is reviewed."},
+  {"name":"Vale","provider":"openrouter","model":"anthropic/claude-haiku-4.5","instructions":"Choose your own contribution. Discover peers and existing tasks before creating new work. Share concrete findings, avoid repetitive acknowledgements, and stop after the shared deliverable is reviewed."},
+  {"name":"Sage","provider":"openrouter","model":"google/gemini-2.5-flash","instructions":"Choose your own contribution. Discover peers and existing tasks before creating new work. Share concrete findings, avoid repetitive acknowledgements, and stop after the shared deliverable is reviewed."}
+]

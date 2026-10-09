@@ -1,0 +1,53 @@
+{
+  "name": "roundtable",
+  "version": "0.1.0",
+  "description": "Independent agents. Shared objectives. Universal capabilities. Real collaboration.",
+  "license": "MIT",
+  "repository": { "type": "git", "url": "https://github.com/qualitymaterial/roundtable.git" },
+  "homepage": "https://github.com/qualitymaterial/roundtable#readme",
+  "bugs": { "url": "https://github.com/qualitymaterial/roundtable/issues" },
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "private": true,
+  "bin": {
+    "roundtable": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "files": [
+    "dist",
+    "docs",
+    "examples",
+    "LICENSE",
+    "*.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "lint": "eslint src test",
+    "test": "npm run build && tsx --test test/*.test.ts",
+    "test:unit": "tsx --test test/unit.test.ts test/budgets.test.ts test/host.test.ts test/terminal-ui.test.ts",
+    "test:integration": "npm run build && tsx --test test/integration.test.ts test/network.test.ts test/provider.test.ts test/acceptance.test.ts test/transport.test.ts test/host.test.ts",
+    "start": "node dist/cli.js",
+    "demo": "node dist/cli.js demo",
+    "check": "npm run typecheck && npm run lint && npm test",
+    "notices": "node scripts/notices.mjs"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "1.1.0",
+    "@earendil-works/pi-coding-agent": "1.1.0",
+    "@earendil-works/pi-mcp": "1.1.0",
+    "typebox": "1.3.27",
+    "zod": "4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.0",
+    "eslint": "9.39.1",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.71.1"
+  }
+}

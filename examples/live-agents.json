@@ -1,0 +1,5 @@
+[
+  { "name": "Ada", "provider": "openai-codex", "model": "gpt-5.5", "instructions": "Choose your own responsibilities and exchange evidence." },
+  { "name": "Ben", "provider": "zai", "model": "glm-4.7", "instructions": "Choose your own responsibilities and exchange evidence." },
+  { "name": "Cam", "provider": "openrouter", "model": "anthropic/claude-haiku-4.5", "instructions": "Choose your own responsibilities and exchange evidence." }
+]
