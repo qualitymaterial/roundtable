@@ -5,6 +5,8 @@ import { ProviderRegistry } from '../src/providers.js';
 import { PiAdapter } from '../src/pi-adapter.js';
 import { fixture } from './helpers.js';
 import { id } from '../src/domain.js';
+import { SessionManager } from '@earendil-works/pi-coding-agent';
+import { join } from 'node:path';
 test('two independent provider adapters pass live admission protocol and execute a Pi tool loop', async () => {
   let registry: ProviderRegistry;
   let rejectProbe = false;
@@ -35,6 +37,13 @@ test('two independent provider adapters pass live admission protocol and execute
     assert.equal(f.engine.session().providerRequests['fixture-provider-one'], 4);
     assert.equal(f.engine.session().providerRequests['fixture-provider-two'], 4);
     assert.equal(f.repo.deliveries(f.session.id, ['failed']).length, 0);
+    const contextDir = join(f.home, 'sessions', f.session.id, one.id);
+    const priorHistory = SessionManager.continueRecent(f.session.workspace, contextDir).getEntries().filter(e => e.type === 'message');
+    await f.engine.changeModel(one.id, 'fixture-provider-two', 'tool-model');
+    f.engine.send({ sessionId: f.session.id, sender: 'human', recipients: [one.id], type: 'human', body: 'Continue with the newly selected provider' }); await f.engine.idle();
+    const newHistory = SessionManager.continueRecent(f.session.workspace, contextDir).getEntries().filter(e => e.type === 'message');
+    assert.ok(newHistory.length > priorHistory.length); for (const entry of priorHistory) assert.ok(newHistory.some(e => e.id === entry.id));
+    assert.equal(f.engine.agents().find(a => a.id === one.id)?.provider, 'fixture-provider-two');
     rejectProbe = true;
     const beforeFailure = f.engine.session().usage.tokens;
     await assert.rejects(f.engine.addAgent({ name: 'Incompatible', provider: 'fixture-provider-one', model: 'tool-model' }), /Tool compatibility failed/);

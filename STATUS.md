@@ -1,33 +1,23 @@
 # Roundtable current state
 
-Updated: 2026-10-09. Canonical owner: this repository. Evidence: docs/TESTING.md and ignored artifacts/verification/. Every product recommendation is tracked in docs/PRODUCT_REVIEW.md, with implemented versus remaining work.
+Updated: 2026-10-09. Canonical owner: this repository. Accepted scope: docs/IMPLEMENTATION_CHECKLIST.md; source audit: docs/PRODUCT_REVIEW.md. Evidence: docs/TESTING.md and ignored artifacts/verification/.
 
 ## Current milestone
 
-0.2.0-dev.1 product-review integration. Native Windows, Node 24.19.0, Pi packages pinned to 1.1.0. Source repository: https://github.com/qualitymaterial/roundtable. This milestone is approved for GitHub publication; npm publication remains disabled. No additional dependencies or mandatory services were added.
+Source is 0.2.0-dev.9: the Ink terminal now follows the user's visual reference with a compact LOCAL header, session details above conversation, muted bordered composer and one-line footer. Document inputs/binary artifacts, steering and MCP lifecycle remain available. Node 24.19; Pi 1.1.0; Ink 8.0.0 / React 19.3.0. The user authorized committing and pushing the accumulated improvements to qualitymaterial/roundtable on 2026-10-09. This is a source release; no npm package publication, telemetry or credential imports. This increment does not complete every accepted audit recommendation.
 
 ## Operational functionality
 
-Independent Pi contexts/providers, asynchronous messaging, shared tasks/artifacts/notes, SQLite persistence, real tools and human approvals remain. New sessions have no cumulative token cap; saved ceilings stay explicit. Request/tool/exchange/time/estimated-cost limits still apply and pause once with recovery controls.
+Interactive commands now use Ink/React with a neutral theme, stable composer/status, ordinary scrollback, grouped live tool activity, actual SDK stream previews, searchable arrow-key pickers, Unicode-aware editing/wrapping, history/completion and safe multiline paste. Secret answers are masked and excluded from public UI snapshots/history. Existing command handlers still own providers, authorization and storage; non-TTY/plain/NDJSON paths remain separate. Ctrl+C pauses; Escape cancels dialogs; Ctrl+D on empty input and /exit close cleanly. Session inspection restores recent messages without inference.
 
-Guided setup selects providers/models, supported authentication, participant instructions and folder-access presets. Native manual/automatic per-agent compaction and bounded transient retries use guarded, metered requests. Original Pi history stays durable. Context and usage reports distinguish available cache/input/output counts from SDK cost estimates.
+PDF, DOCX, PPTX and XLSX attachments retain exact originals and send bounded extracted text only to selected recipients. Parsing has worker/time/size limits; no OCR, formula or macro execution. Binary artifacts can be published from the authorized shared workspace, exported and restored through portable bundles. Workers are not OS sandboxes and binary secrets cannot be automatically redacted.
 
-Host/PID claims reject a second live session owner before recovery. Guarded host edits acquire file claims, store private checkpoints and support previews and hash-protected undo. Approved background jobs have bounded logs, timeouts, inspect/cancel and interrupted recovery. Completion summaries expose open work and validation records; human acceptance is explicit. Multiline drafts, name-based direct messages, human-curated project memory with expiry/delete, four non-executable workflow recipes and headless NDJSON are available.
+/steer targets running independent Pi sessions at a tool boundary. Undelivered instructions remain queued; crash-uncertain deliveries require human inspection before retry. MCP connections are pooled separately per participant with idle expiry, explicit reconnect, no automatic invocation replay and exact resource URI allowlists. Remote MCP OAuth and stronger plugin isolation remain open.
 
-Windows installation copies an independent release, validates it and maintains a stable launcher. Version reporting and validated local release switching are implemented. Existing credentials, runtime configuration and sessions are preserved. Close old harnesses before resuming their sessions under the upgraded version: older processes do not honor ownership claims.
+## Verification
 
-Installed final build: releases/20261009-102525-d4b265c1. A fresh profile-enabled Windows PowerShell launched from the user's home returned 0.2.0-dev.1 for roundtable --version; the installed workflow list also passed. This verifies this execution host, not a new report from the user's separate terminal.
+Captured dev9-check.txt passed strict typecheck, ESLint, build and 117 tests with zero failures/skips. New coverage verifies the reference layout and ASCII borders; existing Unicode resize, approval, secrets and input tests still pass. A Windows PTY verified source launch, bordered-input cursor placement, rename, Ctrl+C pause and clean exit. Prior dev.8 checks cover the three-agent demo, restored history and editor handoff. The user reports successful OpenAI CLI login and improved interaction on dev.8; no additional live authentication or inference was performed here. Installed dev.9 release 20261009-151924-045c191e passed locked dependency installation. Fresh Windows PowerShell launched it from the user home; all five installed CLI/UI hashes match the tested build (dev9-install.txt and dev9-installed-hashes.json). Detailed evidence and repaired initial wording assertion are in docs/TESTING.md.
 
-## Verified results
+## Remaining work
 
-Typecheck, lint, production build and 52 tests pass in product-integration-check.txt. Tests cover manual/automatic compaction, summary failure/history retention, restart, independent contexts, transient retry/request ceilings, ownership, checkpoint conflicts, background approvals/cancellation, scoped memory, recipes and real Pi HTTP transport with deterministic responses. Headless JSON and multiline CLI checks use local scripted providers.
-
-product-install-smoke.txt passes isolated Windows installation, private-data exclusion, launch without Node/npm on PATH, version, valid release activation, broken-release rejection without launcher change, deterministic three-Pi demo, restart and cwd preservation. CI is defined for Windows/Linux/macOS but has not run remotely. Earlier hosted staged collaboration passed on Z.ai/OpenRouter after validator repair; no new hosted inference was performed for this integration.
-
-## Limits and next executable task
-
-The full review is not finished. Hosted compaction fidelity, fresh-user onboarding, autonomous convergence, Codex OAuth and Linux/macOS remain unverified. Binary/document artifacts, browser integration, richer terminal navigation, enforced stages, broader MCP/editor/desktop surfaces and matched solo/team evaluation remain incomplete.
-
-Host shell is unsandboxed; filesystem guards and process cleanup are not hardened isolation. Checkpoints cover host_write only. Claims coordinate upgraded processes sharing a database, not external editors or other databases. Recovery never reruns jobs but cannot guarantee orphan cleanup. Data are private plaintext; the existing operator configuration still points inside the checkout, so preserve that runtime folder.
-
-Next: a bounded hosted long-task evaluation crossing compaction, checking retained constraints/evidence, creating a validated artifact and resuming in a fresh process. Then implement authorized binary attachments and richer project/session navigation against that acceptance suite.
+Keep the complete checklist open: richer Markdown/diff views and inline validation, validator/recovery contracts, general workflow prerequisites, scoped project sandbox (Docker previously unavailable), grouped Git/worktree changes, full skill packages/plugin isolation, remote MCP OAuth, research/FTS, and matched collaboration evaluations. Fresh-user/multi-OS/live-account acceptance is not established by automated counts. Next executable task: user acceptance of the installed Ink interface, then recovery/validator contracts. Existing user sessions remain running until the user chooses to restart them.

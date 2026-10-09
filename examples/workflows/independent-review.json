@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "name": "Independent exploration and evidence review",
+  "objective": "Investigate the human's question independently, compare evidence, and produce a verifiable artifact.",
+  "policy": "structured",
+  "constraints": "Each participant uses its own context and publishes findings. No fixed roles. Declare roundtable_stage_ready when your current stage is finished. Human approval is required to advance. Claims are not validation.",
+  "stages": [
+    { "name": "Independent exploration", "objective": "Reason from the human brief and explicitly attached inputs. Publish your own findings as an artifact, then declare stage readiness. Peer and filesystem tools are withheld during this stage.", "blind": true, "requireArtifact": true },
+    { "name": "Compare and verify", "objective": "Read the independent findings, record agreements and disagreements on the evidence board, verify a peer's JSON artifact if appropriate, and publish your revised conclusion.", "blind": false, "requireArtifact": true }
+  ]
+}

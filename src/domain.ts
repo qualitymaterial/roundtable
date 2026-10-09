@@ -8,6 +8,7 @@ export const MessageInput = z.object({
   id: z.string().min(1).max(100).optional(), sessionId: z.string(), sender: z.string(),
   recipients: z.array(z.string()).max(64), threadId: z.string().min(1).max(100).default('main'),
   type: z.enum(messageTypes), body: z.string().min(1).max(24000),
+  attachments: z.array(z.string()).max(16).optional(),
   artifacts: z.array(z.string()).max(32).default([]), correlationId: z.string().optional(), taskId: z.string().optional(),
 });
 export type MessageDraft = z.input<typeof MessageInput>;
@@ -15,6 +16,9 @@ export type Message = z.output<typeof MessageInput> & { id: string; sequence: nu
 export const AgentInput = z.object({
   id: z.string().uuid().optional(), name: z.string().min(1).max(80),
   provider: z.string().min(1), model: z.string().min(1), instructions: z.string().max(12000).default(''),
+  effort: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
+  maxOutputTokens: z.number().int().positive().optional(),
+  contextWindowTokens: z.number().int().min(1024).optional(),
   permissions: z.array(z.string()).default(['collaborate', 'memory', 'artifact']),
 });
 export type AgentRecord = z.output<typeof AgentInput> & { id: string; sessionId: string; state: 'active' | 'paused' | 'removed'; compatible: boolean };
@@ -27,6 +31,14 @@ export const Limits = z.object({
   providerRequests: z.record(z.string(), z.number().int().positive()).default({}),
 });
 export type SessionRecord = {
+  projectInstructions?: { content: string; hash: string; source: string; reviewedAt: string };
+  importedProjectInstructions?: { content: string; hash: string; source: string; reviewedAt: string };
+  sourceSession?: string;
+  referenceMap?: Record<string, string>;
+  workflow?: import('./policy.js').WorkflowState;
+  projectRoot?: string;
+  name?: string;
+  archived?: boolean;
   completion?: { at: string; note: string; by: 'human' };
   hostAccess?: { readRoots: string[]; writeRoots: string[]; shell: boolean };
   id: string; objective: string; policy: 'open' | 'goal' | 'structured' | 'parallel'; constraints: string;
@@ -36,14 +48,16 @@ export type SessionRecord = {
   providerRequests: Record<string, number>;
 };
 export type Task = { id: string; sessionId: string; title: string; state: 'open' | 'claimed' | 'done' | 'cancelled'; owner?: string; findings: string; dependencies: string[] };
-export type Artifact = { id: string; sessionId: string; name: string; content: string; hash: string; author: string; createdAt: string; provenance: string };
+export type Artifact = { id: string; sessionId: string; name: string; content: string; hash: string; author: string; createdAt: string; provenance: string; encoding?: 'base64'; mimeType?: string; bytes?: number };
 export type Approval = { id: string; sessionId: string; agentId: string; capability: string; reason: string; state: 'pending' | 'approved' | 'rejected' | 'consumed'; command?: { text: string; cwd: string; fingerprint: string; background?: boolean; timeoutMs?: number } };
 export type Note = { id: string; sessionId: string; author: string; text: string; kind: 'note' | 'decision'; timestamp: string };
-export type Delivery = { messageId: string; agentId: string; state: 'pending' | 'inflight' | 'acknowledged' | 'failed'; attempts: number; error?: string };
+export type Delivery = { messageId: string; agentId: string; state: 'pending' | 'inflight' | 'acknowledged' | 'failed' | 'cancelled'; attempts: number; error?: string };
 export interface AgentAdapter {
+  steer?(text: string, delivered: () => void): Promise<boolean>;
+  clearSteering?(): void;
   compact?(): Promise<unknown>;
   context?(): unknown;
-  prompt(text: string): Promise<void>;
+  prompt(text: string, images?: { type: 'image'; data: string; mimeType: string }[]): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;
 }

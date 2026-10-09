@@ -4,7 +4,13 @@
 
 Roundtable is an MIT-licensed, local-first terminal application embedding the official Pi SDK. Independent agent sessions can use different providers, communicate asynchronously, negotiate shared tasks, use authorized tools, publish artifacts, and resume committed collaboration state. Agents have configurable instructions and permissions; there are no built-in roles or mandatory coordinator.
 
-This checkout is **0.2.0-dev.1**, integrating the usability review. Automated tests use **deterministic model fixtures with actual independent Pi sessions**. Earlier hosted acceptance passed with GLM-4.7, Claude Haiku 4.5 and Gemini 2.5 Flash across Z.ai and OpenRouter, using human-staged collaboration and one independent-validator correction. New compaction/recovery features have not been tested with hosted inference. Subscription login, Docker isolation and Linux/macOS execution remain unverified. See [STATUS.md](STATUS.md) and [test evidence](docs/TESTING.md).
+The terminal defaults to a compact view: grouped activity panels, completed responses, and no raw tool payloads. `/activity` opens tool details, `/messages` shows full conversation history, and `/view verbose` restores the live trace. Display changes do not stop model calls or change permissions.
+
+Inside the harness, `/` searches commands, `/sessions` finds saved work, `/favorites` saves model choices, and `/endpoints` configures a local server without editing JSON. `roundtable session resume` opens the session picker directly; saved work opens paused until `/resume`. `/diagnostics` shows connection configuration and offers an explicit metered tool-protocol test. See the [settings and navigation guide](docs/SETTINGS.md).
+
+This checkout is **0.2.0-dev.7**, integrating the usability review and in-harness settings. Automated tests use **deterministic model fixtures with actual independent Pi sessions**. Earlier hosted acceptance passed with GLM-4.7, Claude Haiku 4.5 and Gemini 2.5 Flash across Z.ai and OpenRouter, using human-staged collaboration and one independent-validator correction. New compaction/recovery features have not been tested with hosted inference. Subscription login, Docker isolation and Linux/macOS execution remain unverified. See [STATUS.md](STATUS.md) and [test evidence](docs/TESTING.md).
+
+Use `/project` to review project instructions and save a folder-specific lineup/limits. `/editor` opens a recoverable draft; `@path` or `@"path with spaces"` attaches project files, with Tab completion. `/backup`, `/fork`, and `/import` preserve independent Pi histories in private portable bundles. See [session recovery and composition](docs/SESSION_RECOVERY.md). These source changes are not automatically installed into an already-running harness.
 
 ## Quickstart
 
@@ -40,7 +46,7 @@ For development (or other platforms), `npm link --ignore-scripts` creates a comm
 
 The default runtime directory is `~/.roundtable`, overridable with `ROUNDTABLE_HOME`. An optional `~/.roundtable/config.json` selects `{ "dataDir": "absolute existing runtime directory", "projectAccess": true }`. With `projectAccess:true`, new sessions grant file writes in the folder where you launch `roundtable`; startup prints the effective roots. A fresh clone includes no credentials or machine-access grants. Configure access explicitly using the commands below. No credentials are copied to each project folder.
 
-Startup loads model definitions from `agents.json` in the configured runtime directory, falling back to `live-agents.json` there. It shows each connection and checks tool compatibility using two provider requests per agent. Enter the objective, then type a message at `roundtable>` to talk to the connected agents. Provider charges or quotas may apply. To choose a different file, run `npm start -- --agents examples/live-api-agents.json`. Credentials remain in Roundtable's own auth store or supported environment variables.
+Startup uses a human-saved lineup for the exact project folder first, then loads model definitions from `agents.json` in the configured runtime directory, falling back to `live-agents.json` there. It shows each connection and checks tool compatibility using two provider requests per agent. Enter the objective, then type a message at `roundtable>` to talk to the connected agents. Provider charges or quotas may apply. To choose a different file, run `npm start -- --agents examples/live-api-agents.json`. Credentials remain in Roundtable's own auth store or supported environment variables.
 
 Without saved agents, interactive startup opens guided setup. Run `roundtable setup` to select providers, use supported authentication, search registered models, name participants and choose folder access. Setup does not make model inference calls; subsequent admission checks tool compatibility. Existing membership can also be changed with `/add-agent` and `/save-agents`. Piped startup requires a saved or explicit configuration. Resuming uses the session's stored membership.
 
@@ -55,6 +61,8 @@ The terminal includes participant cards, colored model identities, readable mess
 Use `/budget` to inspect session limits and `/budget tokens off` to disable a saved token ceiling. New sessions have no cumulative token cap by default. Other request, tool, exchange, timeout and estimated-spending limits remain visible and enforced. A limit change does not restart work; `/resume` continues after all exhausted limits are addressed. See [budget controls](docs/TERMINAL.md#budget-controls) and the [usability review and priorities](docs/PRODUCT_REVIEW.md).
 
 ## Connect your models
+
+Start with `roundtable settings` or `/settings` inside the harness. Use `/login` for supported browser/API-key flows, `/model` to select a participant's model without losing its identity/history, `/skills` to review and install instruction snapshots, and `/mcp` to connect external HTTP services or trusted local programs. Current-session changes and saved defaults are shown separately. See the [settings and connections guide](docs/SETTINGS.md).
 
 ```powershell
 node dist/cli.js providers
@@ -134,3 +142,12 @@ npm run notices
 ```
 
 See [architecture](docs/ARCHITECTURE.md), [protocol](docs/PROTOCOL.md), [agents](docs/AGENTS.md), [tools](docs/TOOLS.md), [storage](docs/STORAGE.md), [development](docs/DEVELOPMENT.md), [test evidence](docs/TESTING.md), [roadmap](docs/ROADMAP.md), [contributor guidance](CONTRIBUTING.md), and [third-party notices](THIRD_PARTY_NOTICES.md).
+
+
+### Current development milestone
+
+0.2.0-dev.5 adds recovery, guarded workspace patches, model tuning, scoped PNG/JPEG/CSV/text attachments, saved drafts/audiences, queued-message editing, readable progress views and human-gated collaboration stages. Try `/summary`, `/tuning`, `/audience`, `/attach`, `/queue`, `/changes`, and `/board`. `roundtable workflow independent-review` starts the staged recipe. See [settings](docs/SETTINGS.md) and the [complete implementation checklist](docs/IMPLEMENTATION_CHECKLIST.md) for exact behavior and remaining work. This is still an engineering alpha; the full product audit is not finished.
+
+### Ink terminal (0.2.0-dev.8)
+
+Run `roundtable` for the conversation-first Ink interface. Type `/settings` for searchable keyboard menus. Tool activity stays grouped, and finished messages remain in scrollback. `/steer` updates a running participant at its next tool boundary; `/pause` interrupts. PDF/Office attachments, binary artifact export and per-agent MCP connection reuse are included. No live account or permission behavior is bypassed by the UI. See [terminal controls](docs/TERMINAL.md) and [implemented versus remaining work](docs/IMPLEMENTATION_CHECKLIST.md).

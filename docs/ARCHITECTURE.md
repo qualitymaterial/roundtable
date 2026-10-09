@@ -48,7 +48,7 @@ AgentAdapter, ProviderAdapter, ToolProvider, ToolExecutor, StorageAdapter, Artif
 - Messages require explicit tools to reach peers. Assistant prose goes to the human transcript. This prevents every generated paragraph from causing recursive broadcast.
 - Retrieval tools fetch selected threads and notes. Shared history is not injected wholesale into every agent.
 - Session policies carry objective, mode and constraints to each agent. Open, goal, structured and parallel modes currently share the same bounded scheduler. Structured constraints are instructions; no enforced multi-stage workflow DSL exists yet.
-- The terminal uses Node's readline interface; finished messages are clearly labeled. SDK text-delta events are exposed by Engine for future UI adapters, but the current terminal displays completed messages rather than live partial tokens.
+- Interactive terminals use Ink/React; noninteractive inputs keep the readline/plain path. SDK deltas update a bounded live preview and completed messages enter terminal scrollback.
 
 ## Usability integration boundaries
 
@@ -61,3 +61,28 @@ AgentAdapter, ProviderAdapter, ToolProvider, ToolExecutor, StorageAdapter, Artif
 On 2026-10-08, npm reported `@earendil-works/pi-coding-agent@1.1.0`, requiring Node >=22.19. Inspected the installed declarations and official SDK examples `05-tools.ts`, `09-api-keys-and-oauth.ts`, `11-sessions.ts` and `12-full-control.ts`. Verified `createAgentSession`, `customTools`, `ToolDefinition.execute`, `ModelRuntime`, `SessionManager.continueRecent`, `ResourceLoader`, `SettingsManager.inMemory`, `Agent.streamFunction`, subscription and abort/dispose behavior through compilation and tests.
 
 Official references: [repository](https://github.com/earendil-works/pi), [SDK](https://pi.dev/docs/latest/sdk), [extensions](https://pi.dev/docs/latest/extensions), [models](https://pi.dev/docs/latest/models), [providers](https://pi.dev/docs/latest/providers), [MCP](https://pi.dev/docs/latest/mcp), [Windows](https://pi.dev/docs/latest/windows). Documentation under `latest` can change; installed declarations and package-lock.json define this release's integration.
+
+## Settings and integrations boundaries
+
+input.ts owns the readline stream for chat, menus and masked auth prompts. settings.ts separates saved new-session limits from persisted session records. auth-ui.ts uses the installed registry and supported Pi login interface; browser launching receives HTTPS URLs as arguments without shell interpolation. Engine.changeModel validates a replacement before disposing the prior adapter, keeping the same session directory and participant ID.
+
+skills.ts uses Pi frontmatter parsing to store only reviewed instruction snapshots. connections.ts uses Pi MCP HTTP and stdio transports for explicitly configured servers. Tool-call fingerprints include current connection/skill configuration so cached results cannot bypass revocation. Connection lifecycle is per operation; native Pi automatic resource/extension discovery remains disabled.
+
+
+### Recovery and stage boundaries
+
+`policy.ts` enforces explicit stage barriers; free collaboration remains available. `attachments.ts` handles human-selected immutable input snapshots and per-recipient checks. `views.ts` formats common terminal views. Prepared/committed tool operations, durable owner notifications and guarded file checkpoints belong to the runtime/repository boundary. A failed or uncertain effect is distinct from an idle scheduler and from human acceptance.
+
+The complete audit is tracked in IMPLEMENTATION_CHECKLIST.md. A general stage graph, isolated executable extension host, document pipeline and persistent integration pool remain future implementation work; the current modules do not imply those capabilities exist.
+
+### Project portability and composer (dev.6)
+
+`session-bundles.ts` owns portable snapshot validation, ID remapping and staged import; it does not own credentials or resume execution. `projects.ts` stores human-reviewed instruction snapshots and folder-scoped defaults independently from agent histories. `composer.ts` resolves explicit file mentions and runs human-selected editors; `input.ts` suspends its input ownership during editing. Queue ranking lives in the repository, distinct from message sequence. Provider endpoint lifecycle remains behind `ProviderRegistry`; terminal edits disconnect affected adapters before changing their destination. These changes introduce no new dependencies.
+
+## Presentation boundary (dev.8)
+
+`src/ui/terminal.tsx` adapts CLI/engine activity into `PresentationController`. The controller owns display snapshots, input editing, dialog promises and input events only. `RoundtableApp`, `MessageEntry`, `PromptComposer` and `StatusLine` render these snapshots. Components never access repositories, providers or execution permissions. Existing CLI handlers remain the command/action boundary. A future desktop frontend can consume the same engine events and replace this presentation adapter without importing Ink.
+
+Theme tokens are in `src/ui/theme.ts`; the terminal owns its background/font. Stable agent IDs key concurrent live activity. Ink Static commits final messages to scrollback; frame rate is capped at 20 FPS. Redaction and terminal-control sanitization apply before presentation. Secret answers are held outside public snapshots, masked and omitted from history. Exact approval commands are wrapped, not shortened.
+
+`documents.ts` invokes a disposable resource-limited worker for PDF/Office extraction; originals and extracted-text checksums are retained in attachments. Binary artifacts preserve bytes separately from text encoding. `ConnectionPool` keeps bounded, independent per-agent MCP sessions, expires idle clients and never replays failed tool invocations. Shared runtime state and each Pi conversation remain independent of the renderer.

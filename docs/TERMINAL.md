@@ -1,5 +1,25 @@
 # Terminal interface
 
+## Ink interface (0.2.0-dev.9)
+
+The visual hierarchy follows the supplied Roundtable reference: a small monochrome identity with LOCAL at the right, a muted divider and project path, then SESSION / name and the bold objective above the conversation. The heading is written once per session or rename, rather than repeating above every input. Messages use bold participant names and quiet provider/model metadata. The composer has a single muted rounded border, a small green prompt and an empty-input hint. One footer shows agent/open-task counts, exceptional state such as paused, and `/help`. More keyboard hints appear only in dialogs or command completion. Terminal font and background remain user-controlled; the CLI does not reproduce a browser's outer rounded window or pixel typography. ASCII mode substitutes plain border characters.
+
+Interactive Windows, macOS and Linux terminals use Ink 8 / React 19.3 on Node 24. Completed messages stay in normal terminal scrollback; the live activity area and composer redraw below them. No alternate screen, sidebars or terminal background changes. Participant identity includes the configured provider/model; all state comes from the current session. Compact mode folds tool results and peer chatter into activity summaries. `/activity`, `/messages` and `/view verbose` expose details. Errors and exact approval commands remain visible.
+
+- Type a message, Enter to send. Up/Down recall input history; Left/Right, Home/End, Ctrl+A/E and Backspace/Delete edit by grapheme. Ctrl+U clears and Ctrl+K deletes to the end.
+- Type `/` for suggestions; Tab completes commands and project file mentions. `/commands` opens a searchable picker. Pickers accept text filtering, arrows and Enter; Escape returns without applying a selection.
+- Bracketed clipboard paste stays in the composer until Enter. Multiline paste is one message, even if it contains slash commands. `/paste`, `/end` and `/cancel-paste` retain their previous semantics. Shift+Enter or Alt+Enter inserts a newline when the terminal reports the modifier; `/paste` is the portable fallback.
+- Ctrl+C pauses the current session and cancels an open dialog without exiting. An unsent composer draft stays in memory. Ctrl+D exits when the composer is empty; `/exit` always exits. Escape in chat keeps the draft.
+- `/steer <instruction>` sends revised instructions to the selected audience at the next Pi tool boundary. It does not undo a running tool. Idle/unsupported/paused participants receive an ordinary queued message. Unconsumed steering is retained on pause. Crash-uncertain steering requires inspection and explicit retry.
+- Secret questions use masked input, never transcript/history. Multiline credential paste is rejected. Login still uses the same supported provider flows. External editors use Ink's terminal suspension API.
+
+`NO_COLOR` disables color; `ROUNDTABLE_ASCII=1` uses plain prompt/activity markers. Unicode message content remains intact. Ink handles terminal-cell wrapping and resize; the composer uses grapheme boundaries and display widths. Menus are intentionally temporary. Recent conversation is shown when restoring a session; `/messages` retrieves more.
+
+Pipes, non-TTY stdin/stdout, explicit JSON output and `roundtable run` retain the plain/NDJSON path and never mount Ink. The old renderer remains for that path and its compatibility tests. Live previews use actual SDK deltas, with a credential holdback; short or single-line responses can appear only at completion. The interface does not invent streaming.
+
+
+Version 0.2.0-dev.3 adds `/` or `/commands <search>` for a searchable command menu, `/sessions` for recent saved work, `/favorites` for model shortcuts, `/endpoints` for guided local/custom model setup, and `/diagnostics` for connection status and optional explicit probes. Menus accept search words, page numbers, `next`, `prev`, `all`, and `cancel`. See [SETTINGS.md](SETTINGS.md) for scope and limitations. `roundtable session resume [id]` opens saved work paused for inspection; `/resume` explicitly permits provider work. Switching sessions pauses the current one before leaving.
+
 ## Windows installation
 
 After `npm ci --ignore-scripts` and `npm run build`, run `.\install.cmd` from the checkout. The installer supports Windows PowerShell 5.1, requires Node 24+ and npm, and needs no administrator access. It copies only distribution files, documentation, examples, manifests and license notices into a unique release under `%LOCALAPPDATA%\Programs\Roundtable`. It installs locked production dependencies with lifecycle scripts disabled. A failed dependency or doctor check leaves the old launcher intact. Previous releases are retained; `installation.json` identifies the active one.
@@ -59,3 +79,14 @@ Stdout contains newline-delimited JSON: session, message/tool/system activity an
 ## Updating and changing Windows releases
 
 From a newly built checkout, run `install.cmd` again to install a separate release and switch the stable launcher. The installer preserves runtime data. `roundtable --version` identifies the executable; `roundtable releases` lists local installed copies. `roundtable rollback <release-id>` validates the target using isolated temporary data before switching new invocations. It never downloads code or migrates user data. A failed target leaves the launcher unchanged. Old executables may not understand new data: back up the private runtime before downgrading. Close old harnesses before resuming their sessions under a new version, because old versions do not honor the new ownership lock.
+
+## Settings and integrations — 0.2.0-dev.2
+
+Use `/settings`, `/model`, `/login`, `/logout`, `/skills`, `/skill:name` and `/mcp` inside the harness, or `roundtable settings` before opening a session. See [SETTINGS.md](SETTINGS.md) for complete account flows, scope rules, explicit skill import and named HTTP/stdio connections. The terminal now uses one input owner across chat and menus. Secret/code input is hidden and excluded from readline history; Ctrl-C cancels the active prompt. No persistent command-history file is written.
+
+
+## Compact activity view (dev.7)
+
+Interactive terminals default to compact mode. Startup shows the project, participant models and effective access without repeated metadata panels. Tool activity is accumulated into an ACTIVITY panel at response/pause/error boundaries, with completed/running/failed counts and the last tool for up to three participants. /activity opens full details; /messages opens internal discussion and full response text. This is command-based expansion, not a clickable GUI card or continuously refreshed full-screen region.
+
+Compact mode suppresses raw successful tool results, peer messages, tool-use narration and partial streams; it previews completed responses once (16 lines or 1,600 characters, with an explicit continuation pointer). Errors and approvals are always visible. /view verbose restores detailed live output; /view compact returns to the default. The preference is saved. Piped output and headless events remain detailed. Filtering is presentation only: it does not reduce provider calls, fix acknowledgement loops or remove history.

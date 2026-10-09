@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { id, timestamp, redact, type Delivery, type Message } from './domain.js';
 
-export type EntityKind = 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note' | 'checkpoint' | 'job' | 'knowledge';
+export type EntityKind = 'steering' | 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note' | 'checkpoint' | 'job' | 'knowledge' | 'operation' | 'notification' | 'draft' | 'attachment' | 'evidence';
 export interface StorageAdapter {
   get<T>(kind: EntityKind, id: string): T | undefined;
   list<T>(kind: EntityKind, sessionId?: string): T[];
@@ -11,7 +11,7 @@ export interface StorageAdapter {
 }
 export class Repository implements StorageAdapter {
   readonly db: DatabaseSync;
-  constructor(path: string) {
+  constructor(readonly path: string) {
     mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;
@@ -23,7 +23,9 @@ export class Repository implements StorageAdapter {
       CREATE TABLE IF NOT EXISTS deliveries(message_id TEXT NOT NULL REFERENCES messages(id), agent_id TEXT NOT NULL, state TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, error TEXT, PRIMARY KEY(message_id,agent_id));
       CREATE TABLE IF NOT EXISTS events(sequence INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, session_id TEXT NOT NULL, type TEXT NOT NULL, data TEXT NOT NULL, timestamp TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS tool_results(id TEXT PRIMARY KEY, session_id TEXT NOT NULL, data TEXT NOT NULL);
-      INSERT OR IGNORE INTO migrations VALUES(1,datetime('now'));`);
+      CREATE TABLE IF NOT EXISTS delivery_order(message_id TEXT PRIMARY KEY REFERENCES messages(id), rank INTEGER NOT NULL);
+      INSERT OR IGNORE INTO migrations VALUES(1,datetime('now'));
+      INSERT OR IGNORE INTO migrations VALUES(2,datetime('now'));`);
   }
   transaction<T>(fn: () => T): T {
     this.db.exec('BEGIN IMMEDIATE');
@@ -58,17 +60,27 @@ export class Repository implements StorageAdapter {
     return row ? { ...JSON.parse(String(row.data)) as Message, sequence: Number(row.sequence) } : undefined;
   }
   messages(sessionId: string, threadId?: string, limit = 100): Message[] {
-    const all = this.db.prepare('SELECT sequence,data FROM messages WHERE session_id=? ORDER BY sequence').all(sessionId)
-      .map(row => ({ ...JSON.parse(String(row.data)) as Message, sequence: Number(row.sequence) }));
-    return all.filter(m => !threadId || m.threadId === threadId).slice(-limit);
+    if (!Number.isSafeInteger(limit) || limit < 1) return [];
+    const rows = this.db.prepare(`SELECT sequence,data FROM messages WHERE session_id=? ${threadId ? "AND json_extract(data,'$.threadId')=?" : ''} ORDER BY sequence DESC LIMIT ?`).all(...(threadId ? [sessionId, threadId, limit] : [sessionId, limit]));
+    return rows.reverse().map(row => ({ ...JSON.parse(String(row.data)) as Message, sequence: Number(row.sequence) }));
   }
   deliveries(sessionId: string, states: Delivery['state'][] = ['pending']): Delivery[] {
-    return this.db.prepare('SELECT d.* FROM deliveries d JOIN messages m ON d.message_id=m.id WHERE m.session_id=? ORDER BY m.sequence,d.agent_id').all(sessionId)
+    return this.db.prepare('SELECT d.* FROM deliveries d JOIN messages m ON d.message_id=m.id LEFT JOIN delivery_order o ON o.message_id=m.id WHERE m.session_id=? ORDER BY COALESCE(o.rank,m.sequence),m.sequence,d.agent_id').all(sessionId)
       .filter(row => states.includes(String(row.state) as Delivery['state']))
       .map(row => ({ messageId: String(row.message_id), agentId: String(row.agent_id), state: String(row.state) as Delivery['state'], attempts: Number(row.attempts), error: row.error ? String(row.error) : undefined }));
   }
   delivery(messageId: string, agentId: string, state: Delivery['state'], error?: string): void {
     this.db.prepare('UPDATE deliveries SET state=?, error=?, attempts=attempts+? WHERE message_id=? AND agent_id=?').run(state, error ? redact(error) : null, state === 'inflight' ? 1 : 0, messageId, agentId);
+  }
+  orderPending(sessionId: string, orderedHumanIds: string[]): void {
+    this.transaction(() => {
+      const pending = [...new Set(this.deliveries(sessionId).map(d => d.messageId))].map(key => this.message(key)!);
+      const humans = pending.filter(m => m.sender === 'human');
+      if (new Set(orderedHumanIds).size !== humans.length || orderedHumanIds.length !== humans.length || orderedHumanIds.some(key => !humans.some(m => m.id === key))) throw new Error('Queue changed; choose each pending human message exactly once');
+      const slots = pending.map(m => m.sequence).sort((a, b) => a - b); let index = 0;
+      for (const [i, message] of pending.entries()) this.db.prepare('INSERT OR REPLACE INTO delivery_order VALUES(?,?)').run(message.sender === 'human' ? orderedHumanIds[index++]! : message.id, slots[i]!);
+      this.event(sessionId, 'human_queue_reordered', { messageIds: orderedHumanIds });
+    });
   }
   recover(sessionId: string): void {
     this.db.prepare("UPDATE deliveries SET state='pending' WHERE state='inflight' AND message_id IN (SELECT id FROM messages WHERE session_id=?)").run(sessionId);

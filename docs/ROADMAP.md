@@ -21,3 +21,7 @@ Improve autonomous convergence and context efficiency using hosted evidence. Hum
 - Extend guarded-file undo to multi-file transactions, add binary/document artifacts, and compare solo versus team outcomes on reproducible research/writing/data/coding tasks.
 
 No mandatory account, cloud backend, telemetry, paid Roundtable tier or fixed-role hierarchy is planned.
+
+## Settings UX implementation
+
+Settings/auth/model selection and explicit skill/MCP management work in the terminal; see [SETTINGS.md](SETTINGS.md). Version 0.2.0-dev.3 adds searchable numbered command/session/model menus, model favorites, a local-endpoint wizard and configuration diagnostics with explicit model probes. Dev.6 adds project profiles, portable forks/imports, file mentions/editor, multi-file snapshots/version UI and endpoint lifecycle. Next prioritize PDF/Office extraction and binary outputs, active-turn steering, persistent keyboard/composer UX and connection reconnect. Remote MCP OAuth/resources, persistent connections and a full-screen fuzzy command palette remain follow-up work. Do not infer hosted login success from injected auth-event tests or LM Studio/Ollama compatibility from fixture servers.

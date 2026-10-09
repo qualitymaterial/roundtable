@@ -4,7 +4,7 @@ import { AgentInput, id } from './domain.js';
 import { normalizeHostPolicy } from './host-tools.js';
 import type { ProviderRegistry } from './providers.js';
 
-export interface SetupIO { ask(label: string): Promise<string>; print(text: string): void; login(provider: string, method: 'oauth' | 'api_key'): Promise<void> }
+export interface SetupIO { select?(label: string, choices: string[]): Promise<number>; ask(label: string): Promise<string>; print(text: string): void; login(provider: string, method: 'oauth' | 'api_key'): Promise<void> }
 export function saveJson(path: string, value: unknown): void {
   const temporary = `${path}.${id()}.tmp`;
   writeFileSync(temporary, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' }); renameSync(temporary, path);
@@ -16,6 +16,7 @@ export async function setup(registry: ProviderRegistry, project: string, io: Set
   const ask = async (label: string) => { const value = (await io.ask(label)).trim(); if (value.toLowerCase() === 'cancel') throw new Error('Setup cancelled; agent and access configuration not changed.'); return value; };
   const choose = async <T>(label: string, entries: T[], display: (entry: T) => string): Promise<T> => {
     if (!entries.length) throw new Error('No choices available');
+    if (io.select) return entries[await io.select(label.replace(/ number$/, ''), entries.map(display))]!;
     io.print(entries.map((entry, i) => `${i + 1}. ${display(entry)}`).join('\n'));
     while (true) { const n = Number(await ask(label)); if (Number.isInteger(n) && n >= 1 && n <= entries.length) return entries[n - 1]!; io.print(`Enter a number between 1 and ${entries.length}.`); }
   };

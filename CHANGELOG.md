@@ -1,5 +1,63 @@
 # Changelog
 
+## 0.2.0-dev.9 — reference layout refinement
+
+- Refined Ink styling against the supplied Roundtable reference: compact LOCAL header, session heading above the transcript, muted rounded composer and one-line footer.
+- Preserved keyboard editing, exact approvals, provider login and noninteractive behavior. Added layout assertions and checked cursor placement and pause/exit in Windows PTY.
+- Terminal font/background remain native. OpenAI login and improved interaction were reported working by the user on dev.8; this release does not change authentication.
+
+## 0.2.0-dev.8 — Ink interface and shared documents
+
+- Integrated Ink 8 / React 19.3 with a stable composer, searchable keyboard pickers, neutral theme, grouped live activity and scrollback transcript. Plain/NDJSON output remains available.
+- Added bounded PDF/DOCX/PPTX/XLSX text extraction, exact binary artifact export and recovery support.
+- Added explicit Pi active-turn steering with durable delivery tracking and conservative crash recovery.
+- Added per-agent MCP connection pooling, explicit reconnect and exact-URI resource allowlists.
+- Added deterministic renderer, input, document, steering and MCP lifecycle regressions. Live OAuth and hosted-provider acceptance remain separate.
+
+
+## 0.2.0-dev.7 — compact conversation and activity panels
+
+- Compact terminal startup and grouped per-participant activity panels instead of separate RUN/OK lines and JSON payloads.
+- Intermediate narration and peer traffic stay in history; compact mode shows completed response previews once, without duplicated streamed text.
+- Long responses have a bounded preview and an explicit full-history pointer. Errors and exact approval details remain visible.
+- /view compact or /view verbose persists the preference. Piped/headless traces remain unchanged.
+- Verified with 100 automated tests and an isolated Windows terminal rendering fixture. Full-screen live refresh and click-to-expand cards are not implemented.
+
+
+## 0.2.0-dev.6 � project recovery and composition (source milestone)
+
+- Portable private session backup/import and forks preserve separate Pi histories, workspace files, shared state and evidence. Imported branches start paused; grants, approvals, execution receipts and pending deliveries cannot replay.
+- Explicitly reviewed project instruction snapshots, project participant lineups and default limits. Repository instructions are not loaded automatically.
+- Project file mentions with Tab completion, atomic multi-file snapshots, attachment version history and a human-configured external editor with recovery files.
+- Durable arbitrary pending-message ordering without rewriting the transcript.
+- Edit/remove custom endpoints and configure multiple models with individual context/output/image settings. Affected current-session participants disconnect before approved edits.
+- Installed dev.5 remains unchanged at the user's request; no restart, publication or push in this milestone.
+
+## 0.2.0-dev.4 — provider and model screens
+
+- Replaced legacy `/providers` and `/models` JSON dumps with searchable, paginated menus and sign-in/model actions.
+- Choose a model, select "Use for a participant", and confirm the existing model change; browsing alone performs no inference.
+- Render selection menus in bounded terminal panels, including favorites, settings, login methods and participant selection.
+- Standalone provider/model commands browse interactively in a terminal, print readable listings in pipes, and export JSON only with `--json`.
+
+## 0.2.0-dev.3 — navigation and endpoint setup (local development)
+
+- Added searchable, paginated `/commands` (or `/`), `/sessions`, provider/model menus and saved model favorites.
+- Resume now opens saved sessions paused for inspection. Switching pauses the previous session; `/resume` explicitly starts provider work.
+- Added LM Studio/Ollama/custom endpoint setup with optional bounded server model discovery, environment-name authentication and unique provider aliases.
+- Added a configuration diagnostics report and explicitly confirmed tool-protocol probes with separately reported usage.
+- Fixed dropped input when several menu answers arrive together; trailing pasted credential lines cannot become chat messages.
+- Binary attachments, remote MCP OAuth, endpoint editing/removal and a full-screen command palette remain planned.
+
+## 0.2.0-dev.2 — settings and integrations (local development)
+
+- Added in-session `/settings`, `/model`, `/login`, `/logout`, `/skills` and `/mcp`, plus standalone `roundtable settings`.
+- Fixed Pi `apiKey` metadata normalization so API-key login appears in setup; use readable OAuth/device instructions and browser launching with masked credential/code prompts on one input reader.
+- Model changes preserve participant identity/history/permissions/task ownership and retain the old model after failed admission. Session limits and saved defaults have separate scope.
+- Added explicitly reviewed instruction snapshots and `/skill:name`, with independent agent discovery and no implicit tool grants or script execution.
+- Added named HTTP/stdio MCP connections, test/enable/disable controls, exact tool allowlists, restricted child environments and configuration-aware cache authorization.
+- Added tests for real Pi auth metadata, login event handling, settings scope, model/history preservation, skill revocation and actual stdio MCP. Live account sign-in remains unverified.
+
 ## 0.2.0-dev.1 — product review integration (local development)
 
 - Added guided provider/model/auth and folder-access setup; saving setup disables legacy implicit current-folder write grants.
@@ -51,3 +109,8 @@
 - Verified three configured HTTP provider aliases through Pi's production transport; fixed compatible-endpoint environment key resolution.
 - Fixed failed agent resumption, duplicate connection initialization and admission usage/budget accounting.
 - Verified authorized Z.ai/OpenRouter key setup and live staged GLM/Claude/Gemini collaboration, including validator repair and restart acceptance. Open-ended convergence remains incomplete.
+
+
+## 0.2.0-dev.5 — recovery and daily-use milestone
+
+Added task transfer/removal recovery; shared guarded edits and literal patches; durable tool-operation receipts and explicit failure reconciliation; project identity; effort/output/context controls; readable views and buffered stream previews; scoped image/text/CSV snapshots; durable drafts and audience/queue controls; names/archive; staged collaboration, contribution evidence and independent JSON checks; owner notifications and SQL-bounded transcript retrieval. The full audit backlog is tracked in docs/IMPLEMENTATION_CHECKLIST.md and is not complete.

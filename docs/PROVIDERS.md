@@ -25,7 +25,7 @@ Both providers passed two live nonce/tool-result receipt requests. GLM-4.7, Clau
 
 ## Local and compatible endpoints
 
-Run `init`, copy `.roundtable/endpoints.example.json` to `.roundtable/endpoints.json`, and edit it:
+Run `roundtable endpoints` or `/endpoints` for guided configuration and optional server model discovery. For manual configuration, run `init` and use `endpoints.json` in the printed Roundtable data directory:
 
 ```json
 [
@@ -40,7 +40,7 @@ Run `init`, copy `.roundtable/endpoints.example.json` to `.roundtable/endpoints.
 ]
 ```
 
-Set LOCAL_API_KEY to the server's key, or a nonsecret placeholder only if the server does not authenticate. Compatible config currently uses OpenAI chat-completions. Use a distinct provider alias for each endpoint/account. This file supports one model per provider alias in v0.1. No arbitrary command-backed key resolver is loaded. Embedded URL credentials and non-HTTP(S) schemes are rejected. Configuration is operator-trusted: an endpoint can receive prompts and its own configured key.
+Set LOCAL_API_KEY to the server's key. An unauthenticated loopback server can omit apiKeyEnv; Roundtable supplies a nonsecret SDK placeholder in that case. Remote endpoints require an environment variable reference. Compatible config currently uses OpenAI chat-completions and text input. Use a distinct provider alias for each endpoint/model; built-in provider names cannot be replaced. No arbitrary command-backed key resolver is loaded. Embedded URL credentials, query strings, fragments and non-HTTP(S) schemes are rejected. Configuration is operator-trusted: an endpoint can receive prompts and its own configured key. Context/output limits are entered by the operator, not inferred from model names.
 
 | Server | Common base URL / setup |
 | --- | --- |
@@ -66,3 +66,7 @@ Compatible endpoint `apiKeyEnv` names are converted to explicit Pi `$VARIABLE` r
 Pi native independent-session compaction is enabled; both manual and automatic summary requests use Roundtable's provider guard and usage ledger. Two bounded transient agent retries are enabled with 1-second base delay and a 5-second maximum agent retry delay; hidden provider transport retries are disabled. Retries use the same provider/model and do not grant tools or replay completed tool calls. Compatibility probes, ordinary responses and compaction all consume session request/usage budgets.
 
 `/usage` displays available input, output, cache-read and cache-write totals by participant with source labels. Older records lack component fields and are not reconstructed. SDK price estimates are not invoices; zero-price custom endpoints may have unknown operating cost. No automatic fallback sends conversation data to a different provider.
+
+## Settings integration authentication
+
+`/login` and `roundtable login` select providers and supported methods from the pinned registry. Pi exposes API-key metadata as `apiKey`, while its login call uses `api_key`; the registry now normalizes that distinction, fixing missing API-key choices in the earlier wizard. Both `openai-codex` and `anthropic` expose OAuth in Pi 1.1.0; successful subscription login/account eligibility remains unverified here. API-key and manual-code prompts share the terminal input owner, suppress echo and avoid command history. Automatic HTTPS browser opening can be toggled in settings. `/model` validates the candidate before changing the participant; IDs and existing Pi history persist. See [settings guide](SETTINGS.md).

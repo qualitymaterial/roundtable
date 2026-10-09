@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import { id, redact, type Approval, type SessionRecord } from './domain.js';
 import type { ToolRegistry } from './tools.js';
 import type { Engine } from './engine.js';
+import { workspacePath } from './tools.js';
 import { acquireSession } from './session-lock.js';
 
 export const HostAccess = z.object({ readRoots: z.array(z.string().min(1)).max(32).default([]), writeRoots: z.array(z.string().min(1)).max(32).default([]), shell: z.boolean().default(false) }).strict();
@@ -53,14 +54,14 @@ async function textFile(path: string, signal: AbortSignal): Promise<string> {
   } finally { await handle.close(); }
 }
 const digest = (content: string) => createHash('sha256').update(content).digest('hex');
-export type Checkpoint = { id: string; sessionId: string; path: string; before: string | null; afterHash: string; createdAt: string; state: 'prepared' | 'applied' | 'undone' };
+export type Checkpoint = { id: string; sessionId: string; path: string; before: string | null; afterHash: string; createdAt: string; state: 'prepared' | 'applied' | 'undone'; scope?: 'host' | 'workspace'; agentId?: string };
 export function listCheckpoints(engine: Engine) {
   return engine.repo.list<Checkpoint>('checkpoint', engine.sessionId).map(({ before, ...entry }) => ({ ...entry, createdFile: before === null }));
 }
 export async function previewCheckpoint(engine: Engine, checkpointId: string): Promise<string> {
   const entry = engine.repo.get<Checkpoint>('checkpoint', checkpointId);
   if (!entry || entry.sessionId !== engine.sessionId || entry.state !== 'applied') throw new Error('Unknown applied checkpoint');
-  const path = await hostPath(engine.session(), entry.path);
+  const path = await checkpointPath(engine, entry);
   const current = await textFile(path, new AbortController().signal);
   if (digest(current) !== entry.afterHash) throw new Error('File changed since this checkpoint; inspect the current file before restoring.');
   const before = (entry.before ?? '').split('\n'); const after = current.split('\n');
@@ -75,7 +76,7 @@ export async function previewCheckpoint(engine: Engine, checkpointId: string): P
 export async function undoCheckpoint(engine: Engine, checkpointId: string): Promise<void> {
   const entry = engine.repo.get<Checkpoint>('checkpoint', checkpointId);
   if (!entry || entry.sessionId !== engine.sessionId || entry.state !== 'applied') throw new Error('Unknown applied checkpoint');
-  const path = await hostPath(engine.session(), entry.path, true);
+  const path = await checkpointPath(engine, entry, true);
   const release = acquireSession(engine.repo.db, `file:${path}`);
   try {
     const signal = new AbortController().signal;
@@ -85,13 +86,51 @@ export async function undoCheckpoint(engine: Engine, checkpointId: string): Prom
       const temp = join(dirname(path), `.roundtable-undo-${id()}`);
       try {
         const handle = await open(temp, 'wx', (await stat(path)).mode); try { await handle.writeFile(entry.before, 'utf8'); } finally { await handle.close(); }
-        await hostPath(engine.session(), path, true);
+        await checkpointPath(engine, entry, true);
         if (digest(await textFile(path, signal)) !== entry.afterHash) throw new Error('File changed while preparing restore');
         await rename(temp, path);
       } finally { await unlink(temp).catch(() => {}); }
     }
     entry.state = 'undone'; engine.repo.put('checkpoint', entry); engine.repo.event(engine.sessionId, 'checkpoint_undone', { id: entry.id, path });
   } finally { release(); }
+}
+async function checkpointPath(engine: Engine, entry: Checkpoint, write = false): Promise<string> {
+  return entry.scope === 'workspace' ? workspacePath(engine.session().workspace, relative(await realpath(engine.session().workspace), entry.path).split('\\').join('/')) : hostPath(engine.session(), entry.path, write);
+}
+/** Shared optimistic write with a durable before-image. File guards are not an OS sandbox. */
+export async function guardedWrite(engine: Engine, authorize: () => Promise<string>, content: string, expectedHash: string, signal: AbortSignal, scope: 'host' | 'workspace', agentId: string) {
+    const canonical = await authorize(); signal.throwIfAborted();
+    if (Buffer.byteLength(content) > 256000) throw new Error('File exceeds 256 KB');
+    const release = acquireSession(engine.repo.db, `file:${canonical}`);
+    try {
+    const before = expectedHash === 'new' ? null : await textFile(canonical, signal);
+    if (before !== null && digest(before) !== expectedHash) throw new Error('File changed; read it again before editing');
+    const checkpoint: Checkpoint = { id: id(), sessionId: engine.sessionId, path: canonical, before, afterHash: digest(content), createdAt: new Date().toISOString(), state: 'prepared', scope, agentId };
+    engine.repo.put('checkpoint', checkpoint);
+    if (expectedHash === 'new') {
+      const handle = await open(canonical, 'wx', 0o600); try { await handle.writeFile(content, { encoding: 'utf8', signal }); } finally { await handle.close(); }
+    } else {
+      if (digest(await textFile(canonical, signal)) !== expectedHash) throw new Error('File changed; read it again before editing');
+      const mode = (await stat(canonical)).mode;
+      const temp = join(dirname(canonical), `.roundtable-edit-${id()}`);
+      try {
+        const handle = await open(temp, 'wx', mode); try { await handle.writeFile(content, { encoding: 'utf8', signal }); } finally { await handle.close(); }
+        if (await authorize() !== canonical) throw new Error('File path changed while editing'); signal.throwIfAborted();
+        if (digest(await textFile(canonical, signal)) !== expectedHash) throw new Error('File changed while preparing edit');
+        await rename(temp, canonical);
+      } finally { await unlink(temp).catch(() => {}); }
+    }
+    checkpoint.state = 'applied'; engine.repo.put('checkpoint', checkpoint);
+    engine.repo.event(engine.sessionId, 'checkpoint_created', { id: checkpoint.id, path: canonical, afterHash: checkpoint.afterHash });
+    return { path: canonical, sha256: digest(content), bytes: Buffer.byteLength(content), checkpointId: checkpoint.id };
+    } finally { release(); }
+}
+export async function guardedPatch(engine: Engine, authorize: () => Promise<string>, before: string, after: string, expectedHash: string, signal: AbortSignal, scope: 'host' | 'workspace', agentId: string) {
+  const content = await textFile(await authorize(), signal);
+  if (digest(content) !== expectedHash) throw new Error('File changed; read it again before patching');
+  const at = content.indexOf(before);
+  if (!before || at < 0 || content.indexOf(before, at + 1) !== -1) throw new Error('Patch must match exactly one nonempty literal span');
+  return guardedWrite(engine, authorize, content.slice(0, at) + after + content.slice(at + before.length), expectedHash, signal, scope, agentId);
 }
 export function installHostTools(registry: ToolRegistry): void {
   const engine = registry.engine;
@@ -136,33 +175,10 @@ export function installHostTools(registry: ToolRegistry): void {
     }
     return { matches, visited, skipped, bounded: true, truncated: pending.length > 0 || visited >= 2000 || matches.length >= 50 || Date.now() >= deadline };
   });
-  registry.register('host_write', 'Create or replace a UTF-8 file under authorized write roots. Existing files REQUIRE the SHA-256 from host_read; new files require expectedHash="new". No delete tool.', Type.Object({ path: pathSchema, content: Type.String({ maxLength: 256000 }), expectedHash: Type.String({ minLength: 3, maxLength: 64 }) }), 'host.write', async ({ path, content, expectedHash }, { signal }) => {
-    const canonical = await hostPath(engine.session(), path, true); signal.throwIfAborted();
-    if (Buffer.byteLength(content) > 256000) throw new Error('File exceeds 256 KB');
-    const release = acquireSession(engine.repo.db, `file:${canonical}`);
-    try {
-    const before = expectedHash === 'new' ? null : await textFile(canonical, signal);
-    if (before !== null && digest(before) !== expectedHash) throw new Error('File changed; read it again before editing');
-    const checkpoint: Checkpoint = { id: id(), sessionId: engine.sessionId, path: canonical, before, afterHash: digest(content), createdAt: new Date().toISOString(), state: 'prepared' };
-    engine.repo.put('checkpoint', checkpoint);
-    if (expectedHash === 'new') {
-      const handle = await open(canonical, 'wx', 0o600); try { await handle.writeFile(content, { encoding: 'utf8', signal }); } finally { await handle.close(); }
-    } else {
-      if (digest(await textFile(canonical, signal)) !== expectedHash) throw new Error('File changed; read it again before editing');
-      const mode = (await stat(canonical)).mode;
-      const temp = join(dirname(canonical), `.roundtable-edit-${id()}`);
-      try {
-        const handle = await open(temp, 'wx', mode); try { await handle.writeFile(content, { encoding: 'utf8', signal }); } finally { await handle.close(); }
-        await hostPath(engine.session(), path, true); signal.throwIfAborted();
-        if (digest(await textFile(canonical, signal)) !== expectedHash) throw new Error('File changed while preparing edit');
-        await rename(temp, canonical);
-      } finally { await unlink(temp).catch(() => {}); }
-    }
-    checkpoint.state = 'applied'; engine.repo.put('checkpoint', checkpoint);
-    engine.repo.event(engine.sessionId, 'checkpoint_created', { id: checkpoint.id, path: canonical, afterHash: checkpoint.afterHash });
-    return { path: canonical, sha256: digest(content), bytes: Buffer.byteLength(content), checkpointId: checkpoint.id };
-    } finally { release(); }
+  registry.register('host_write', 'Create or replace a UTF-8 file under authorized write roots. Existing files REQUIRE the SHA-256 from host_read; new files require expectedHash="new". No delete tool.', Type.Object({ path: pathSchema, content: Type.String({ maxLength: 256000 }), expectedHash: Type.String({ minLength: 3, maxLength: 64 }) }), 'host.write', async ({ path, content, expectedHash }, { signal, agent }) => {
+    return guardedWrite(engine, () => hostPath(engine.session(), path, true), content, expectedHash, signal, 'host', agent.id);
   });
+  registry.register('host_patch', 'Replace one unique literal text span under authorized write roots. Requires the host_read hash; stale or ambiguous patches fail.', Type.Object({ path: pathSchema, before: Type.String({ minLength: 1, maxLength: 256000 }), after: Type.String({ maxLength: 256000 }), expectedHash: Type.String({ pattern: '^[a-f0-9]{64}$' }) }), 'host.write', (args, { signal, agent }) => guardedPatch(engine, () => hostPath(engine.session(), args.path, true), args.before, args.after, args.expectedHash, signal, 'host', agent.id));
   registry.register('host_mkdir', 'Create a single directory under an authorized write root. Parent must already exist.', Type.Object({ path: pathSchema }), 'host.write', async ({ path }, { signal }) => {
     const canonical = await hostPath(engine.session(), path, true); signal.throwIfAborted(); await mkdir(canonical); return { path: canonical };
   });

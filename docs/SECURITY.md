@@ -38,3 +38,32 @@ Host-write checkpoints contain original plaintext file content in the private da
 Background jobs require an approval bound to the participant, exact command, cwd, background mode and timeout. Four jobs maximum, bounded output and one-hour maximum timeout apply; pause/exit cancel managed jobs. Crash recovery marks records interrupted without rerunning commands. Detached or orphaned OS processes may survive a crash; this is not a process supervisor or hardened sandbox.
 
 Guided setup offers none/read/edit access to the selected folder and separately opts into unsandboxed command requests. It disables legacy automatic current-folder write grants. Curated project memory is saved only by a human command, scoped to the canonical launch folder, excluded from retrieval after expiry and shared only on explicit request. Forgetting removes the current stored entry, not prior shared messages or backups. Workflow files cannot declare executable hooks or permissions.
+
+## Skills and named MCP connections
+
+The new skills manager imports only the human-selected SKILL.md after review, parses it with Pi's frontmatter helper, and stores a bounded snapshot. Neither skill directories nor supporting scripts execute automatically. Skill metadata never changes execution-layer permissions. Manual-only skills cannot be read by models; revoked snapshots/configurations invalidate cached tool-call identities. Instructions already sent to a model cannot be recalled.
+
+Named MCP programs require explicit configuration and enabling by a human. Stdio programs inherit a minimal OS environment plus explicitly named variables; provider keys are excluded by default. This does not stop a trusted local program from reading credentials through OS privileges: stdio is not sandboxed. Connections have exact tool allowlists and per-agent/session permission checks. Configuration changes affect future calls, while an already-authorized in-flight request can finish. HTTP redirects are rejected; remote MCP OAuth and persistent server sessions are not implemented. See docs/SETTINGS.md for supported boundaries.
+
+
+### Input snapshots and staged work
+
+PNG/JPEG input snapshots preserve the selected bytes, including any embedded image metadata. Text/code/CSV snapshots redact known credential formats/environment secrets before hashing; they are not forensic copies. Attachment authorization is checked per recipient and session, with integrity verification on retrieval. Do not attach a sensitive image expecting text redaction to remove its contents. No PDF/Office extraction or automatic external viewer is enabled. Snapshot export uses exclusive creation and will not overwrite a destination.
+
+Independent-exploration stages restrict new in-app peer sharing and shared/host/MCP tools. They do not erase prior context or provide operating-system isolation. Use new independent sessions for blind comparisons. New file checkpoints include scope and author. Legacy host checkpoint behavior remains supported; shell/external effects stay outside undo guarantees.
+
+## Portable state and editor boundaries (dev.6)
+
+Backups contain conversation histories and selected file bytes. File/path exclusions and checksums do not prove absence of secrets, trustworthy provenance, or safe instructions. Keep bundles private. Import creates a paused branch, restricts capabilities, removes effective execution approvals, and never replays deliveries or jobs. Pi histories remain untrusted conversation data; loading a backup is not an executable extension installation. Imported project instructions require new review. Backup excludes the host project itself, authentication, provider/MCP configuration and cross-session memory.
+
+The external editor is an explicitly human-selected program with the human's OS privileges. It runs with literal executable/argument separation, without a shell; this is not agent sandboxing. Existing unsent drafts survive launch errors, and recovery files can contain private text. File mentions are bounded selected snapshots inside the canonical project root; `/attach` remains the explicit external-file selection route.
+
+## Document and presentation boundaries (dev.8)
+
+Document parsing runs in a disposable worker with a 128 MiB old-generation heap limit and a ten-second wall-clock deadline. A worker is not an OS sandbox and the JavaScript heap limit is not a total-process RSS guarantee. PDF.js receives bytes, no resource URLs, and a denying external-data factory; no PDF scripts/forms are executed. Office ZIP parsing bounds selected expansion and rejects unsafe paths, macros and document type declarations. Saxes parses XML without external entity resolution. These are parser/resource protections, not certification that hostile documents are safe in another application.
+
+Original binary inputs/artifacts are stored privately and exported byte-for-byte; their embedded secrets cannot be automatically redacted. Extracted text, displayed messages and logs use normal redaction. Only explicitly selected input recipients receive extracted text. Office/PDF text is untrusted source material.
+
+Ink has one input owner. Bracketed paste cannot submit hidden lines, secret answers are absent from snapshots/history, and terminal controls are stripped from untrusted output. Approvals still require the existing human commands and retain exact command/cwd details. MCP pooling separates participants and never automatically retries an invocation with uncertain remote effects. Local MCP programs and trusted tool plugins retain OS user privileges; pooling does not sandbox them.
+
+Approval command control and bidi characters are displayed as literal Unicode escapes rather than silently disappearing or changing the terminal. Newlines and ordinary command text remain readable; known credentials remain redacted.

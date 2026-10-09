@@ -24,6 +24,8 @@ All required collaboration tools are operational:
 | container_execute | Constrained Docker JavaScript execution / execute.container |
 | web_research | Fixed configured POST research service / network.research |
 | mcp_tools_list, mcp_call | Pi MCP discovery and allowlisted invocation / mcp.remote |
+| mcp_servers_list | Configured server metadata without starting programs / collaborate |
+| roundtable_skills_list, roundtable_skill_read | Explicitly reviewed instruction snapshots / collaborate |
 
 Workspace tools reject absolute paths, traversal, hidden/sensitive names, alternate data streams and symlink paths. Search currently scans at most 100 root-level regular files, not recursive directories. Text file contents/results are bounded. Files live under a newly created session workspace, not the caller's repository or home. Git mutation tools are planned; current Git support is status only.
 
@@ -54,3 +56,24 @@ Agents can publish candidate tool source as a nonexecuting artifact and request 
 Successful `host_write` returns a checkpoint ID. Human `/diff` and `/undo` operate on applied checkpoints with fresh authorization and hash checks. Only this direct edit tool is covered; shell effects and separate workspace edits are not automatically reversible.
 
 `host_job_start(command,cwd,timeoutMs?)` uses `host.execute` and requests single-use approval bound to all invocation fields, including background mode. It returns a durable ID immediately after approval. `host_job_read(id)` returns bounded state/output, and `host_job_stop(id)` cancels a managed job. At most four jobs run concurrently, with timeouts from 1 second to 1 hour (10 minutes by default). Jobs are scoped to a session. The executor has the same unsandboxed OS privileges and best-effort process cleanup as foreground host execution.
+
+
+### Guarded edits and operation recovery (0.2.0-dev.5)
+
+`workspace_read` now returns `{path,content,sha256}`. Existing-file `workspace_write` requires that `expectedHash`; omission means exclusive new-file creation. `workspace_patch` and `host_patch` replace one unique literal `before` span with `after`, requiring the current hash. All use guarded checkpoints. `/changes` reviews applied versions; `/undo` rejects changed files. External commands, MCP effects and container changes are not universally undoable.
+
+Tool execution records prepared/committed receipts. Prepared receipts left by process failure have unknown outcomes, block new execution and appear in `/summary`. A human can record reconciliation with `/resolve-failure`; the original call ID is never automatically re-executed. This does not provide exactly-once delivery to external services.
+
+Pi activates configured, authorized tool schemas for each prompt. `roundtable_tools_list` still discovers restricted tools so agents can request capabilities. Health remains explicitly unprobed. Stage policies can further withhold tools; trusted plugins still run in process with cooperative cancellation.
+
+New tools: `roundtable_stage_status`, `roundtable_stage_ready`, `roundtable_evidence_add`, `roundtable_evidence_list`, `roundtable_artifact_validate_json`. JSON validation requires a different author and binds its limited structural check to the stored artifact hash. Findings/decisions remain attributed claims.
+
+`roundtable_reference_resolve({ids:[...]})` maps source IDs to current IDs after imports/forks, including ancestor forks, without injecting an unbounded mapping into every model prompt. It uses the existing `collaborate` permission. A missing mapping returns `current:null`; agents should rediscover current shared resources. Project instructions, editor configuration, backups/imports, endpoint edits and queue rearrangement are human actions, not model-granted capabilities.
+
+## Documents, binary artifacts and MCP resources (dev.8)
+
+`/attach` and project file mentions accept PDF, DOCX, PPTX and XLSX in addition to existing text/images. Documents are at most 2 MiB; extraction is limited to 64,000 characters, 200 pages/content parts, 8 MiB decompressed selected XML, 1,000 ZIP entries and 10 seconds. Agents receive scoped extracted text plus limitations, not the encoded original. `/attachments` exports the original file and preserves versions. PDF extraction does not OCR scans. Office extraction covers main text, slide text and cell values; it omits layout, images, notes and embedded objects. Spreadsheet formulas are not evaluated. Legacy Office and macros are unsupported.
+
+`roundtable_artifact_publish_file({path,provenance})` publishes a shared-workspace PDF, DOCX, PPTX, XLSX, PNG or JPEG. It requires both `artifact` and `workspace.read`, checks format signatures and limits each file to 2 MiB / binary session total to 20 MiB. Signature checks are not semantic validation or antivirus. Tool results return metadata, not base64 payloads. `/artifact` exports exact bytes with exclusive creation. Hashes and bytes survive session backups/forks. Text JSON validation rejects binary artifacts.
+
+MCP uses per-agent connection leases (maximum 32, 60-second idle expiry, bounded request lifetimes). Configuration/selected credential changes invalidate old leases; errors discard the connection without replay. `/mcp-reconnect [server]` closes leases so the next authorized call establishes a fresh session. Exit closes the pool. `mcp_resources_list` returns a single metadata page; `mcp_resource_read` requires an exact URI in the connection's human-configured `resources` allowlist. `/mcp manage` provides resource selection. Resource content remains untrusted. OAuth server login and resource templates remain future work.

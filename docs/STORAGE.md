@@ -14,7 +14,7 @@ The default runtime directory is `~/.roundtable`, independent of the launch fold
   workspaces/<session>/         explicitly shared files
 ```
 
-Migration 1 creates indexed entities, append-only messages/events, per-recipient delivery state, tool-result cache and a migration ledger. Entities hold sessions, agents, tasks, artifacts, approvals and notes. Repository transactions use BEGIN IMMEDIATE; writes are committed locally. Task claim checks and mutation are atomic. Artifact content is immutable through public tools and hash-checked on read.
+Migration 2 adds `delivery_order(message_id,rank)`, preserving human-selected queue order separately from immutable transcript sequences. It is additive; normal delivery falls back to message sequence. Migration 1 creates indexed entities, append-only messages/events, per-recipient delivery state, tool-result cache and a migration ledger. Entities hold sessions, agents, tasks, artifacts, approvals and notes. Repository transactions use BEGIN IMMEDIATE; writes are committed locally. Task claim checks and mutation are atomic. Artifact content is immutable through public tools and hash-checked on read.
 
 Optional host policy is stored with session JSON; older records remain readable without a table migration. Command approvals move from pending to approved/rejected, then approved to consumed before process launch. A crash after consumption may require a new approval; commands are never automatically replayed. Host cache fingerprints include the current root policy, preventing cached reads after root revocation.
 
@@ -31,3 +31,18 @@ SQLite and Pi JSONL are separate stores. A crash can happen between side effect,
 The existing generic entity repository stores `checkpoint`, `job` and `knowledge` records without changing older entity data. The ownership component creates `session_owners(session_id,pid,host,token)` and claims it transactionally before inflight recovery. Session records may include human completion metadata; new usage events optionally include token components. Older records remain readable.
 
 Checkpoint original file text stays private and is not included in ordinary session exports. Knowledge is scoped to a canonical launch folder and intentionally excluded from automatic session/model context. Pi compaction retains original JSONL entries plus a compaction record; agent histories never merge. SQLite and JSONL do not form one transaction, so crash recovery remains at least once.
+
+
+### Development release 0.2.0-dev.5
+
+Generic entity records now include operations, notification receipts, drafts, scoped attachments and contribution evidence. New session fields preserve project root, optional name/archive and workflow stage state. These additions use the existing generic entity table; old records remain readable with conservative defaults. Message attachments are optional IDs. Cancelled deliveries retain original messages and audit history. Queued replacement insertion and original-delivery cancellation commit together. Message thread filtering and bounded retrieval execute in SQL.
+
+Tool prepared receipts precede handlers; completion receipt/cache/event commit together. A crash between an external effect and its receipt remains ambiguous and requires human reconciliation. Checksums establish stored-byte integrity, not correctness or safety. Images are base64 snapshots in the private SQLite store, bounded to 2 MiB each and 20 MiB per session. Text snapshots are bounded and redacted; original selected files are not modified. Existing JSON transcript export is not a full portable backup of Pi histories, attachment bytes or filesystem contents.
+
+## Portable bundles (dev.6)
+
+`session-bundles.ts` captures a paused, settled session as a versioned `.rtbundle` with an envelope checksum and per-file hashes. It includes agents, messages, shared entities, event history, regular shared-workspace files and separate Pi v3 JSONL histories. The default bounds are 64 MiB encoded, 32 MiB decoded files, 16 MiB per file, and the existing attachment bounds. Hidden workspace entries, credential paths and links are excluded and reported. Host project files, project-wide memory, authentication and other runtime configuration are not included.
+
+Import validates shapes, references, hashes, dependency cycles and paths before SQLite commit, then creates a fresh paused branch with new IDs. It retains text literally and provides `roundtable_reference_resolve` for historical IDs across repeated forks. Active task claims release. Historical approvals are excluded; jobs/checkpoints/tool receipts are inert audit data. Imported messages have cancelled deliveries, never automatic replay. Separate Pi contexts use new directories/headers. Imported workflow stages start at the first gate with no prior approval; instruction snapshots require human review again. File staging is removed on caught failure; a process crash during staging can leave an unreferenced UUID directory, never a visible partial session.
+
+`projects/<root-hash>.json` contains human-saved per-folder defaults and instruction snapshots. `drafts/<uuid>.txt` holds temporary external-editor files; failed, unchanged or detached-launcher drafts are retained for manual recovery. Bundles and recovery files are private, unencrypted content, not safe public exports. See SESSION_RECOVERY.md for commands and limits.

@@ -5,10 +5,12 @@ import { z } from 'zod';
 import { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Api, AuthInteraction, Model, AssistantMessage, Context } from '@earendil-works/pi-ai';
 import { id, redact } from './domain.js';
+import { saveJson } from './setup.js';
 
 export interface ProviderAdapter { models(provider?: string): { provider: string; id: string; name: string }[]; validate(provider: string, model: string): Promise<AssistantMessage[]> }
 export const LiveAgents = z.array(z.object({ name: z.string().min(1).max(80), provider: z.string().min(1), model: z.string().min(1), instructions: z.string().max(10000).optional() }).strict()).length(3);
-const EndpointConfig = z.object({ provider: z.string().regex(/^[a-z][a-z0-9-]+$/), baseUrl: z.url(), model: z.string().min(1), apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/), contextWindow: z.number().int().positive().default(32000), maxTokens: z.number().int().positive().default(4096) });
+export const EndpointModel = z.object({ id: z.string().min(1).max(500), contextWindow: z.number().int().positive().default(32000), maxTokens: z.number().int().positive().default(4096), images: z.boolean().default(false) }).strict().refine(m => m.maxTokens <= m.contextWindow, 'Maximum output must fit in the context window');
+export const EndpointConfig = z.object({ provider: z.string().regex(/^[a-z][a-z0-9-]{1,63}$/), baseUrl: z.url().refine(raw => { const u = new URL(raw); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password && !u.search && !u.hash; }, 'Use an HTTP(S) base URL without credentials, query or fragment'), model: z.string().min(1).max(500), images: z.boolean().default(false), models: z.array(EndpointModel).max(99).default([]), apiKeyEnv: z.string().regex(/^[A-Z][A-Z0-9_]*$/).optional(), contextWindow: z.number().int().positive().default(32000), maxTokens: z.number().int().positive().default(4096) }).strict().refine(c => c.maxTokens <= c.contextWindow, 'Maximum output must fit in the context window').refine(c => new Set([c.model, ...c.models.map(m => m.id)]).size === c.models.length + 1, 'Model IDs must be unique within an endpoint').refine(c => Boolean(c.apiKeyEnv) || ['localhost', '127.0.0.1', '[::1]'].includes(new URL(c.baseUrl).hostname), 'Remote endpoints require an API key environment variable');
 export class ProviderRegistry implements ProviderAdapter {
   private constructor(readonly runtime: ModelRuntime, readonly home: string) {}
   static async create(home: string): Promise<ProviderRegistry> {
@@ -20,19 +22,38 @@ export class ProviderRegistry implements ProviderAdapter {
     if (existsSync(configPath)) {
       const configs = z.array(EndpointConfig).max(32).parse(JSON.parse(readFileSync(configPath, 'utf8')));
       if (new Set(configs.map(c => c.provider)).size !== configs.length) throw new Error('Use a unique provider alias for each endpoint/model configuration');
-      for (const config of configs) {
-        const url = new URL(config.baseUrl);
-        if (url.username || url.password) throw new Error('Endpoint URLs must not contain credentials');
-        if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Endpoint must use HTTP(S)');
-        // Pi 1.1.0 treats bare names as literals; only $NAME resolves an environment value.
-        runtime.registerProvider(config.provider, { baseUrl: config.baseUrl, api: 'openai-completions', apiKey: `$${config.apiKeyEnv}`, models: [{ id: config.model, name: config.model, reasoning: false, input: ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: config.contextWindow, maxTokens: config.maxTokens }] });
-      }
+      for (const config of configs) { if (registry.providers().some(p => p.id === config.provider)) throw new Error(`Endpoint alias conflicts with a registered provider: ${config.provider}`); registry.registerEndpoint(config); }
     }
     return registry;
   }
   models(provider?: string): { provider: string; id: string; name: string }[] { return this.runtime.getModels(provider).map(m => ({ provider: m.provider, id: m.id, name: m.name })); }
+  endpoints(): z.output<typeof EndpointConfig>[] {
+    const path = join(this.home, 'endpoints.json');
+    return existsSync(path) ? z.array(EndpointConfig).max(32).parse(JSON.parse(readFileSync(path, 'utf8'))) : [];
+  }
+  private registerEndpoint(c: z.output<typeof EndpointConfig>): void {
+    // Pi resolves $NAME as an environment reference. The loopback-only placeholder is not a credential.
+    this.runtime.registerProvider(c.provider, { baseUrl: c.baseUrl, api: 'openai-completions', apiKey: c.apiKeyEnv ? `$${c.apiKeyEnv}` : 'roundtable-local-no-auth', models: [{ id: c.model, contextWindow: c.contextWindow, maxTokens: c.maxTokens, images: c.images }, ...c.models].map(m => ({ id: m.id, name: m.id, reasoning: false, input: m.images ? ['text', 'image'] : ['text'], cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: m.contextWindow, maxTokens: m.maxTokens })) });
+  }
+  addEndpoint(input: unknown): void {
+    const c = EndpointConfig.parse(input); const entries = this.endpoints();
+    if (this.providers().some(p => p.id === c.provider) || entries.some(e => e.provider === c.provider)) throw new Error('Provider alias already exists; choose a new alias.');
+    const next = z.array(EndpointConfig).max(32).parse([...entries, c]);
+    saveJson(join(this.home, 'endpoints.json'), next); this.registerEndpoint(c);
+  }
+  replaceEndpoint(provider: string, input: unknown): void {
+    const replacement = EndpointConfig.parse(input); const entries = this.endpoints(); const old = entries.find(e => e.provider === provider);
+    if (!old || replacement.provider !== provider) throw new Error('Only an existing custom endpoint can be edited; its alias cannot change');
+    this.runtime.unregisterProvider(provider);
+    try { this.registerEndpoint(replacement); saveJson(join(this.home, 'endpoints.json'), entries.map(e => e.provider === provider ? replacement : e)); }
+    catch (error) { this.runtime.unregisterProvider(provider); this.registerEndpoint(old); throw error; }
+  }
+  removeEndpoint(provider: string): void {
+    const entries = this.endpoints(); if (!entries.some(e => e.provider === provider)) throw new Error('Only custom endpoints can be removed');
+    saveJson(join(this.home, 'endpoints.json'), entries.filter(e => e.provider !== provider)); this.runtime.unregisterProvider(provider);
+  }
   providers(): { id: string; configured: boolean; auth: string[] }[] {
-    return this.runtime.getProviders().map(p => ({ id: p.id, configured: this.runtime.hasConfiguredAuth(p.id), auth: Object.keys(p.auth ?? {}) }));
+    return this.runtime.getProviders().map(p => ({ id: p.id, configured: this.runtime.hasConfiguredAuth(p.id), auth: Object.keys(p.auth ?? {}).map(name => name === 'apiKey' ? 'api_key' : name) }));
   }
   preflight(input: unknown) {
     const agents = LiveAgents.parse(input);

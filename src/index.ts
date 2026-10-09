@@ -1,4 +1,6 @@
 export { Engine, type AdapterFactory } from './engine.js';
+export { captureSession, writeBundle, readBundle, restoreBundle, type SessionBundle } from './session-bundles.js';
+export { ProjectProfiles } from './projects.js';
 export { Repository, type StorageAdapter, type EntityKind } from './storage.js';
 export { SQLiteArtifactStore, type ArtifactStore } from './artifacts.js';
 export { PiAdapter, type ModelStream } from './pi-adapter.js';

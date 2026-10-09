@@ -51,3 +51,33 @@ test('Pi MCP client discovers schemas and executes only allowlisted, authorized 
     await f.close(); await new Promise<void>(r => server.close(() => r()));
   }
 });
+
+test('MCP pools isolate agents, reuse connections, enforce resource allowlists and reconnect without replay', async () => {
+  let initialized = 0; let reads = 0; let fail = false;
+  const server = createServer(async (req, res) => {
+    if (req.method === 'DELETE') { res.end(); return; }
+    const rpc = await body(req);
+    if (rpc.id === undefined) { res.writeHead(202); res.end(); return; }
+    if (rpc.method === 'initialize') initialized++;
+    if (rpc.method === 'resources/read') { reads++; if (fail) { res.writeHead(500); res.end(); return; } }
+    const result = rpc.method === 'initialize' ? { protocolVersion: LATEST_PROTOCOL_VERSION, capabilities: { resources: {} }, serverInfo: { name: 'resource-fixture', version: '1' } }
+      : rpc.method === 'resources/list' ? { resources: [{ uri: 'memory://design', name: 'Design' }] }
+      : { contents: [{ uri: 'memory://design', mimeType: 'text/plain', text: 'Verified resource fixture' }] };
+    res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ jsonrpc: '2.0', id: rpc.id, result }));
+  }); const url = await serve(server); const f = fixture();
+  try {
+    f.engine.connections.save({ id: 'fixture', type: 'http', url, enabled: true, resources: ['memory://design'] });
+    const a = await agent(f.engine, 'A'); const b = await agent(f.engine, 'B');
+    for (const actor of [a, b]) { actor.permissions.push('mcp.remote'); f.repo.put('agent', actor); }
+    assert.equal((await tool(f.engine, a, 'mcp_resources_list', { server: 'fixture' })).ok, true);
+    assert.equal((await tool(f.engine, a, 'mcp_resource_read', { server: 'fixture', uri: 'memory://design' })).ok, true); assert.equal(initialized, 1);
+    assert.equal((await tool(f.engine, a, 'mcp_resource_read', { server: 'fixture', uri: 'file:///private' })).ok, false); assert.equal(reads, 1);
+    assert.equal((await tool(f.engine, b, 'mcp_resources_list', { server: 'fixture' })).ok, true); assert.equal(initialized, 2);
+    await f.engine.connections.disconnect('fixture'); assert.equal(f.engine.connections.status().length, 0);
+    assert.equal((await tool(f.engine, a, 'mcp_resources_list', { server: 'fixture' })).ok, true); assert.equal(initialized, 3);
+    fail = true; assert.equal((await tool(f.engine, a, 'mcp_resource_read', { server: 'fixture', uri: 'memory://design' })).ok, false); assert.equal(reads, 2, 'failed invocation was not retried');
+    fail = false; assert.equal((await tool(f.engine, a, 'mcp_resources_list', { server: 'fixture' })).ok, true); assert.equal(initialized, 4);
+    f.engine.connections.save({ ...f.engine.connections.get('fixture'), enabled: false });
+    assert.equal((await tool(f.engine, a, 'mcp_resources_list', { server: 'fixture' })).ok, false);
+  } finally { await f.close(); await new Promise<void>(r => server.close(() => r())); }
+});
