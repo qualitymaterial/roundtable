@@ -22,6 +22,20 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Absolute launcher failed without npm/Node on PATH.' }
     $info = ($doctor -join "`n") | ConvertFrom-Json
     if ($info.sqlite -ne 'connected' -or $info.home -ne $env:ROUNDTABLE_HOME) { throw 'Doctor did not use the expected runtime.' }
+    $version = & $launcher --version
+    if ($LASTEXITCODE -ne 0 -or $version -ne $info.version) { throw 'Installed version command failed.' }
+    $releases = ((& $launcher releases) -join "`n") | ConvertFrom-Json
+    if ($LASTEXITCODE -ne 0 -or @($releases).Count -lt 1) { throw 'Release discovery failed.' }
+    & $launcher rollback (Split-Path $manifest.release -Leaf)
+    if ($LASTEXITCODE -ne 0) { throw 'Switching to a validated release failed.' }
+    # Invalid installed candidates must not replace the known-working launcher.
+    $beforeLauncher = [IO.File]::ReadAllText($launcher)
+    $broken = Join-Path $installRoot 'releases\broken-fixture'
+    New-Item -ItemType Directory -Path (Join-Path $broken 'dist') -Force | Out-Null
+    [IO.File]::WriteAllText((Join-Path $broken 'package.json'), '{"version":"broken-fixture"}')
+    [IO.File]::WriteAllText((Join-Path $broken 'dist\cli.js'), 'process.exit(42)')
+    & $launcher rollback broken-fixture
+    if ($LASTEXITCODE -eq 0 -or [IO.File]::ReadAllText($launcher) -ne $beforeLauncher) { throw 'Failed release validation changed launcher.' }
     & $launcher demo
     if ($LASTEXITCODE -ne 0) { throw 'Standalone demo failed.' }
     & $launcher session list
@@ -32,4 +46,4 @@ try {
     $env:Path = $oldPath
     $env:ROUNDTABLE_HOME = $oldHome
 }
-Write-Host "PASS: independent install, private-data exclusion, launch without npm/Node PATH, demo, restart, caller cwd. Evidence retained: $testRoot"
+Write-Host "PASS: independent install, private-data exclusion, launch without npm/Node PATH, version, release activation, rejected invalid release, demo, restart, caller cwd. Evidence retained: $testRoot"

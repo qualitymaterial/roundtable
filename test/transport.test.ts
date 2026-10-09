@@ -88,14 +88,26 @@ test('three configured HTTP providers pass admission and collaborate through Pi 
     // Exercise npm start's no-argument entrypoint, including queued input across
     // objective entry and admission. Keep stdin open until the model responds.
     writeFileSync(join(home, 'agents.json'), JSON.stringify([configs[0]]));
+    // A real child CLI using the production transport must emit only NDJSON.
+    const headless = spawn(process.execPath, [resolve('dist/cli.js'), 'run', 'CLI greeting: hello'], { env: { ...process.env, ROUNDTABLE_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] });
+    let jsonOutput = ''; let jsonError = '';
+    headless.stdout.on('data', data => { jsonOutput += String(data); }); headless.stderr.on('data', data => { jsonError += String(data); });
+    const headlessTimer = setTimeout(() => headless.kill(), 60000);
+    const headlessCode = await new Promise<number | null>((resolveExit, reject) => { headless.once('error', reject); headless.once('close', resolveExit); }).finally(() => clearTimeout(headlessTimer));
+    assert.equal(headlessCode, 0, jsonOutput + jsonError);
+    const events = jsonOutput.trim().split('\n').map(line => JSON.parse(line));
+    assert.equal(events[0].type, 'session'); assert.equal(events.at(-1).type, 'summary'); assert.equal(events.at(-1).state, 'idle');
+    assert.ok(events.some(e => e.type === 'message' && e.message.body === 'CLI provider received hello'));
     const child = spawn(process.execPath, [resolve('dist/cli.js')], { env: { ...process.env, ROUNDTABLE_HOME: home }, stdio: ['pipe', 'pipe', 'pipe'] });
-    let output = ''; let errorsOutput = ''; let replied = false;
+    let output = ''; let errorsOutput = ''; let replied = false; let sentDirect = false;
     child.stderr.on('data', data => { errorsOutput += String(data); });
     child.stdout.on('data', data => {
       output += String(data);
-      if (!replied && output.includes('CLI provider received hello')) { replied = true; child.stdin.end('/save-agents\n/exit\n'); }
+      const responses = output.split('CLI provider received hello').length - 1;
+      if (!sentDirect && responses >= 1) { sentDirect = true; child.stdin.write('/send @alpha CLI greeting: hello direct\n'); }
+      if (!replied && responses >= 2) { replied = true; child.stdin.end('/save-agents\n/exit\n'); }
     });
-    child.stdin.write('CLI startup objective\nCLI greeting: hello\n');
+    child.stdin.write('CLI startup objective\n/paste\nCLI greeting: hello\n/ordinary-slash-text\n/end\n');
     const timer = setTimeout(() => child.kill(), 60000);
     const code = await new Promise<number | null>((resolveExit, reject) => { child.once('error', reject); child.once('close', resolveExit); }).finally(() => clearTimeout(timer));
     assert.equal(code, 0, output + errorsOutput); assert.equal(replied, true, output + errorsOutput);
@@ -104,8 +116,9 @@ test('three configured HTTP providers pass admission and collaborate through Pi 
     try {
       const session = cliRepo.list<{ id: string; objective: string }>('session').find(s => s.objective === 'CLI startup objective'); assert.ok(session);
       assert.equal(cliRepo.list('agent', session.id).length, 1);
-      assert.equal(cliRepo.deliveries(session.id, ['acknowledged']).length, 1);
+      assert.equal(cliRepo.deliveries(session.id, ['acknowledged']).length, 2);
       assert.ok(cliRepo.messages(session.id).some(m => m.body === 'CLI provider received hello' && m.sender !== 'human'));
+      assert.ok(cliRepo.messages(session.id).some(m => m.body === 'CLI greeting: hello\n/ordinary-slash-text'));
     } finally { cliRepo.close(); }
   } finally {
     await engine?.close(); repo.close();

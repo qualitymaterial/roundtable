@@ -54,6 +54,31 @@ test('routing is asynchronous, bounded and ordered per agent with global concurr
     assert.equal(f.repo.deliveries(f.session.id, ['acknowledged']).length, 6);
   } finally { await f.close(); }
 });
+
+test('independent Pi sessions finish at the token ceiling without duplicate pauses or replay', async () => {
+  const f = fixture(undefined, { limits: { tokens: 20 } });
+  await f.engine.close();
+  const registry = await ProviderRegistry.create(f.home); await registerMock(registry);
+  let calls = 0;
+  const engine = new Engine(f.repo, f.session.id, PiAdapter.factory(registry, model => {
+    calls++; const stream = createAssistantMessageEventStream();
+    queueMicrotask(() => {
+      const response: AssistantMessage = { role: 'assistant', api: model.api, provider: model.provider, model: model.id, timestamp: Date.now(), content: [{ type: 'text', text: 'Review complete and saved.' }], stopReason: 'stop', usage: { input: 5, output: 5, cacheRead: 0, cacheWrite: 0, totalTokens: 10, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };
+      stream.push({ type: 'start', partial: response }); stream.push({ type: 'done', reason: 'stop', message: response });
+    }); return stream;
+  }));
+  try {
+    await engine.addAgent({ name: 'One', provider: 'roundtable-mock', model: 'alpha' });
+    await engine.addAgent({ name: 'Two', provider: 'roundtable-mock', model: 'beta' });
+    engine.send({ sessionId: f.session.id, sender: 'human', recipients: ['*'], type: 'human', body: 'Finish a review' });
+    await engine.idle();
+    assert.equal(engine.session().state, 'paused'); assert.equal(calls, 2);
+    assert.equal(f.repo.events(f.session.id).filter(e => e.type === 'paused').length, 1);
+    assert.equal(f.repo.deliveries(f.session.id, ['acknowledged']).length, 2);
+    assert.equal(f.repo.messages(f.session.id).filter(m => m.body === 'Review complete and saved.').length, 2);
+    engine.updateLimits({ tokens: null }); engine.resume(); await engine.idle(); assert.equal(calls, 2);
+  } finally { await engine.close(); await f.close(); }
+});
 test('inflight delivery recovers after reopen and failure requires explicit retry', async () => {
   const f = fixture(); let restored: Engine | undefined;
   try {
@@ -116,6 +141,10 @@ test('CLI subprocesses create, export, validate and restore a demo after process
     assert.equal(empty.status, 0, empty.stdout + empty.stderr);
     assert.ok(empty.stdout.includes('No agents connected; message was not sent'));
     assert.ok(!empty.stdout.includes('[message] human'));
+    const budget = run([], 'Budget controls\n/budget tokens 12\n/pause\n/budget tokens off\n/resume\n/status\n/exit\n');
+    assert.equal(budget.status, 0, budget.stdout + budget.stderr);
+    assert.ok(budget.stdout.includes('"tokens": null')); assert.ok(budget.stdout.includes('Session resumed.'));
+    assert.ok(!budget.stdout.includes('[error]'));
     const missing = run(['--agents', join(home, 'missing.json')], 'Objective\n/exit\n');
     assert.equal(missing.status, 1); assert.ok(missing.stdout.includes('[error]'));
     const demo = run(['demo']); assert.equal(demo.status, 0, demo.stderr + demo.stdout);

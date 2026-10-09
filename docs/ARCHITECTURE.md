@@ -42,13 +42,19 @@ AgentAdapter, ProviderAdapter, ToolProvider, ToolExecutor, StorageAdapter, Artif
 
 ## Decisions and tradeoffs
 
-- Embed verified Pi 1.1.0 APIs instead of forking Pi. Supply an explicit ResourceLoader, tool allowlist, custom tool definitions and session directory. Disable automatic context-resource discovery, compaction, cache warming and agent retries to avoid hidden calls or host capabilities.
+- Embed verified Pi 1.1.0 APIs instead of forking Pi. Supply an explicit ResourceLoader, tool allowlist, custom tool definitions and session directory. Disable implicit context-resource discovery and cache warming. Native per-agent compaction and at most two transient agent retries use the same guarded, metered stream; transport retries are disabled to avoid unmetered repeats. Original Pi history stays durable after compaction.
 - Node 24 includes SQLite; this avoids a platform-specific database addon. SQL entities use typed JSON records with indexed ownership, while messages/events retain append order.
 - One scheduler job per agent prevents simultaneous mutation of its context. Different agents run concurrently, bounded by the session limit. Sending queues durable delivery and returns immediately.
 - Messages require explicit tools to reach peers. Assistant prose goes to the human transcript. This prevents every generated paragraph from causing recursive broadcast.
 - Retrieval tools fetch selected threads and notes. Shared history is not injected wholesale into every agent.
 - Session policies carry objective, mode and constraints to each agent. Open, goal, structured and parallel modes currently share the same bounded scheduler. Structured constraints are instructions; no enforced multi-stage workflow DSL exists yet.
 - The terminal uses Node's readline interface; finished messages are clearly labeled. SDK text-delta events are exposed by Engine for future UI adapters, but the current terminal displays completed messages rather than live partial tokens.
+
+## Usability integration boundaries
+
+`session-lock.ts` claims a session before recovery using SQLite transactions and host/PID ownership. Direct host edits use the same claim mechanism keyed by canonical file path. These coordinate upgraded processes sharing one database; they are not distributed leases or protection against external editors.
+
+`jobs.ts` owns approved child processes and durable job records. `completion.ts` derives idle/waiting/running state from tasks, approvals, deliveries and jobs, without treating idle as validated success. `usage.ts` separates available token components from SDK cost estimates. `setup.ts` writes explicit provider/access configuration; `knowledge.ts` stores human-curated, expiring project memory; `workflows.ts` validates non-executable recipes. `releases.ts` switches among already-installed Windows copies after checking the target. Headless CLI events use the same engine, excluding partial text fragments and implicit host grants.
 
 ## SDK verification
 

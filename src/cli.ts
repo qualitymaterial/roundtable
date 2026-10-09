@@ -12,16 +12,28 @@ import { ProviderRegistry } from './providers.js';
 import { PiAdapter } from './pi-adapter.js';
 import { verifyCollaboration } from './acceptance.js';
 import { mockStream, registerMock, runDemo, demoObjective, validateMemoryArtifact } from './demo.js';
-import { AgentInput, Limits, type AgentRecord, type Artifact, type SessionRecord } from './domain.js';
+import { AgentInput, redact, type AgentRecord, type Artifact, type SessionRecord } from './domain.js';
 import type { ToolProvider } from './tools.js';
-import { HostAccess, hostCapabilities, normalizeHostPolicy } from './host-tools.js';
+import { HostAccess, hostCapabilities, normalizeHostPolicy, listCheckpoints, undoCheckpoint, previewCheckpoint } from './host-tools.js';
 import type { Approval } from './domain.js';
 import { TerminalUI } from './terminal-ui.js';
+import { budgetHelp } from './budgets.js';
+import { setup } from './setup.js';
+import { completionReport } from './completion.js';
+import { usageReport } from './usage.js';
+import { VERSION } from './version.js';
+import { KnowledgeStore } from './knowledge.js';
+import { workflows, loadWorkflow } from './workflows.js';
+import { WindowsReleases } from './releases.js';
 
 const userHome = join(homedir(), '.roundtable');
 const configFile = join(userHome, 'config.json');
 const userConfig = !process.env.ROUNDTABLE_HOME && existsSync(configFile) ? z.object({ dataDir: z.string().min(1), projectAccess: z.boolean().default(false) }).strict().parse(JSON.parse(readFileSync(configFile, 'utf8'))) : undefined;
 const home = resolve(process.env.ROUNDTABLE_HOME ?? userConfig?.dataDir ?? userHome);
+function projectAccessEnabled(): boolean {
+  const path = join(home, 'preferences.json');
+  return existsSync(path) ? z.object({ projectAccess: z.boolean() }).strict().parse(JSON.parse(readFileSync(path, 'utf8'))).projectAccess : userConfig?.projectAccess ?? false;
+}
 const ui = new TerminalUI(stdout);
 const print = (value: unknown) => ui.print(value);
 function transcript(engine?: Engine, repo?: Repository): (activity: unknown) => void {
@@ -31,6 +43,7 @@ function transcript(engine?: Engine, repo?: Repository): (activity: unknown) => 
     const agent = engine?.agents().find(x => x.id === agentId) ?? repo?.get<AgentRecord>('agent', agentId);
     const label = agent ? `${agent.name} [${agent.provider}/${agent.model}]` : (a.agentId ?? a.message?.sender ?? 'system');
     if (a.type === 'stream') { ui.composing(label); return; }
+    if (a.type === 'paused') { ui.paused(a.text ?? 'Paused', budgetHelp); return; }
     if (a.type === 'message') {
       const recipients = stdout.isTTY ? a.message!.recipients.map(id => engine?.agents().find(x => x.id === id)?.name ?? id) : a.message!.recipients;
       ui.message(label, a.message!.body, recipients, a.message!.sender === 'human');
@@ -47,6 +60,10 @@ function transcript(engine?: Engine, repo?: Repository): (activity: unknown) => 
 const help = `Roundtable — independent agents, shared objectives
 roundtable [--agents config.json]   Start with saved agents; live admission uses provider requests
 roundtable init | doctor | providers | models [provider] | login <provider> [oauth|api_key]
+roundtable setup                 Guided provider, model and project-access setup
+roundtable workflows | workflow <name-or-json-file> [--agents config.json]
+roundtable releases | rollback <installed-release-id>   Windows standalone releases
+roundtable run <objective> --agents config.json   Headless newline-delimited JSON events
 roundtable session new <objective> [--agents config.json]
 roundtable session list | resume <id> | export <id> [path]
 roundtable demo                 Deterministic model fixtures using three real Pi sessions
@@ -59,8 +76,15 @@ Interactive commands:
 /agents | /add-agent <JSON> | /remove-agent <id> | /pause-agent <id> | /resume-agent <id>
 /replace-agent <id> <provider> <model>
 /providers | /models [provider] | /tools | /tasks | /artifacts | /messages | /activity
-/send <agent-id> <message> | ordinary text broadcasts to all members
-/status | /pause | /resume | /retry | /limits <JSON>
+/send <name-or-id> <message> | ordinary text broadcasts to all members
+/status | /pause | /resume | /retry | /budget | /limits <JSON>
+/summary | /finish <completion note> | /context [agent] | /compact <agent>
+/changes | /diff <checkpoint-id> | /undo <checkpoint-id>
+/paste                          Compose multiple lines; /end sends, /cancel-paste discards
+/jobs | /job <id> | /stop-job <id>
+/usage                          Per-participant token components and estimated cost
+/remember <text> | /memory [query] | /share-memory <id> | /forget <id>
+/budget tokens <total|off> | /budget dollars <total> | /budget requests|tools|exchanges <total>
 /approvals | /approve <request-id> | /reject <request-id>
 /host | /host-read <absolute-folder> | /host-write <absolute-folder>
 /host-shell on|off | /host-off | /save-access
@@ -105,7 +129,7 @@ function terminalInput(): TerminalInput {
   const rl = createInterface({ input: stdin, output: stdout, completer: line => [commands.filter(command => command.startsWith(line)), line] });
   return { rl, lines: rl[Symbol.asyncIterator]() };
 }
-function startupAgents(registry: ProviderRegistry, explicitPath?: string): z.output<typeof AgentInput>[] {
+function startupAgents(registry: ProviderRegistry, explicitPath?: string, announce = true): z.output<typeof AgentInput>[] {
   const path = explicitPath ? resolve(explicitPath) : [join(home, 'agents.json'), join(home, 'live-agents.json')].find(existsSync);
   if (!path) return [];
   const configs = z.array(AgentInput.strict()).min(1).max(64).parse(JSON.parse(readFileSync(path, 'utf8')));
@@ -113,7 +137,7 @@ function startupAgents(registry: ProviderRegistry, explicitPath?: string): z.out
     registry.model(config.provider, config.model);
     if (!registry.providers().some(p => p.id === config.provider && p.configured)) throw new Error(`No Roundtable authentication for ${config.provider}; run login ${config.provider} api_key or configure its supported environment variable`);
   }
-  print(`Loading ${configs.length} agents from ${path}. Admission makes two provider requests per agent; provider charges or quotas may apply.`);
+  if (announce) print(`Loading ${configs.length} agents from ${path}. Admission makes two provider requests per agent; provider charges or quotas may apply.`);
   return configs;
 }
 async function configureHost(engine: Engine, input: unknown, quiet = false): Promise<void> {
@@ -133,13 +157,23 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
   await registerMock(registry);
   const engine = new Engine(repo, sessionId, async (agent, current) => PiAdapter.create(registry, agent, current, agent.provider === 'roundtable-mock' ? mockStream : undefined));
   const { rl, lines } = input;
+  const knowledge = new KnowledgeStore(repo, process.cwd());
   ui.attach(rl);
   engine.on('activity', transcript(engine));
+  let pasted: string[] | undefined;
+  rl.on('SIGINT', () => { pasted = undefined; void engine.pause('Interrupted by human (Ctrl-C)').catch(error => print(`[error] ${String(error)}`)); });
+  const participant = (reference: string) => {
+    const matches = engine.agents().filter(a => a.state !== 'removed' && (a.id === reference || a.name.toLowerCase() === reference.replace(/^@/, '').toLowerCase() || (reference.length >= 8 && a.id.startsWith(reference))));
+    if (matches.length !== 1) throw new Error('Use a unique participant name or ID. Put names containing spaces in double quotes. /agents lists participants.');
+    return matches[0]!;
+  };
   try {
     ui.banner(projectFolder ?? process.cwd(), home); ui.session(engine.session());
+    const initial = engine.session();
+    print(`Session limits: tokens ${initial.limits.tokens ?? 'off'}, estimated cost $${initial.limits.dollars}, requests ${initial.limits.requests}, tools ${initial.limits.toolCalls}. /budget shows all limits.`);
     const accessPath = join(home, 'host-access.json');
     if (!engine.session().hostAccess && existsSync(accessPath)) await configureHost(engine, JSON.parse(readFileSync(accessPath, 'utf8')), true);
-    if (projectFolder && userConfig?.projectAccess) {
+    if (projectFolder && projectAccessEnabled()) {
       const policy = HostAccess.parse(engine.session().hostAccess ?? {}); policy.writeRoots.push(projectFolder); await configureHost(engine, policy, true);
     }
     ui.host(HostAccess.parse(engine.session().hostAccess ?? {}));
@@ -152,13 +186,33 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
     }
     await engine.connect();
     const active = engine.agents().filter(a => a.state === 'active');
-    for (const agent of active) print(`[connected] ${agent.name} [${agent.provider}/${agent.model}]`);
+    for (const agent of active) print(`[${engine.session().state === 'paused' ? 'saved participant' : 'connected'}] ${agent.name} [${agent.provider}/${agent.model}]`);
     if (stdout.isTTY) ui.agents(active);
-    print(active.length ? `${active.length} agents ready. Type a message to talk to them, or /help for commands.` : 'No agents connected. Use /add-agent <JSON> or save a model configuration to .roundtable/agents.json and restart. /help shows an example.');
+    if (engine.session().state === 'paused') ui.paused(engine.session().reason ?? 'Session paused', budgetHelp);
+    else print(active.length ? `${active.length} agents ready. Type a message to talk to them, or /help for commands.` : 'No agents connected. Exit and run roundtable setup for guided configuration, or use /add-agent <JSON>. /help shows an example.');
     while (true) {
       ui.prompt(); const next = await lines.next(); ui.submitted(); if (next.done) break;
-      const line = next.value.trim(); if (!line) continue;
+      let line = next.value.trim();
+      if (pasted) {
+        if (line === '/cancel-paste') { pasted = undefined; print('Draft discarded.'); continue; }
+        if (line !== '/end') {
+          if (pasted.join('\n').length + next.value.length + 1 > 24000) { print('Draft limit is 24,000 characters. Use /end or /cancel-paste.'); continue; }
+          pasted.push(next.value); continue;
+        }
+        line = pasted.join('\n'); pasted = undefined;
+        try {
+          if (line.trim()) {
+            if (!engine.agents().some(a => a.state === 'active')) throw new Error('No active participants. Draft was not sent.');
+            engine.send({ sessionId, sender: 'human', recipients: ['*'], type: 'human', body: line });
+          }
+        } catch (error) { pasted = line.split('\n'); print(`[error] ${String(error)}. Draft retained; /end retries, /cancel-paste discards.`); }
+        continue;
+      }
+      if (line === '/paste') { pasted = []; print('Multiline draft: /end sends it; /cancel-paste discards it. Other slash commands are literal text.'); continue; }
+      if (!line) continue;
       const [command, ...words] = line.split(/\s+/); const rest = line.slice(command!.length).trim();
+      const reference = /^(?:"([^"]+)"|(\S+))(?:\s+(.*))?$/s.exec(rest);
+      const target = reference?.[1] ?? reference?.[2] ?? ''; const targetRest = reference?.[3] ?? '';
       try {
         if (command === '/exit') break;
         if (!line.startsWith('/')) {
@@ -189,9 +243,9 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
             if (!configs.length) throw new Error('No agents to save');
             const path = join(home, 'agents.json'); writeFileSync(path, JSON.stringify(configs, null, 2)); print(`Saved ${configs.length} agents to ${path} for future sessions.`); break;
           }
-          case '/remove-agent': await engine.setAgentState(words[0]!, 'removed'); break;
-          case '/pause-agent': await engine.setAgentState(words[0]!, 'paused'); break;
-          case '/resume-agent': await engine.setAgentState(words[0]!, 'active'); break;
+          case '/remove-agent': await engine.setAgentState(participant(target).id, 'removed'); break;
+          case '/pause-agent': await engine.setAgentState(participant(target).id, 'paused'); break;
+          case '/resume-agent': await engine.setAgentState(participant(target).id, 'active'); break;
           case '/replace-agent': {
             const old = engine.agents().find(a => a.id === words[0]); if (!old) throw new Error('Unknown agent');
             await engine.setAgentState(old.id, 'removed');
@@ -204,22 +258,61 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
           case '/artifacts': print(repo.list('artifact', sessionId)); break;
           case '/messages': print(repo.messages(sessionId)); break;
           case '/activity': print(repo.events(sessionId).slice(-40)); break;
-          case '/send': engine.send({ sessionId, sender: 'human', recipients: [words[0]!], type: 'human', body: rest.slice(words[0]!.length).trim() }); break;
+          case '/send': engine.send({ sessionId, sender: 'human', recipients: [participant(target).id], type: 'human', body: targetRest }); break;
+          case '/budget': {
+            if (rest) {
+              const fields: Record<string, string> = { tokens: 'tokens', dollars: 'dollars', requests: 'requests', tools: 'toolCalls', exchanges: 'exchanges' };
+              const field = fields[words[0]!]; const value = words[1];
+              if (!field || !value || words.length !== 2) throw new Error('Use /budget tokens <total|off> or /budget dollars|requests|tools|exchanges <total>.');
+              engine.updateLimits({ [field]: field === 'tokens' && value === 'off' ? null : Number(value) });
+              print('Limit updated. Usage is cumulative and was not reset. If paused, /resume continues unfinished work.');
+            }
+            ui.status(engine.session(), engine.agents(), (engine.status() as { running: number }).running, repo.deliveries(sessionId, ['pending', 'inflight']).length);
+            print('Tokens count cumulative usage across all calls and agents, including repeated input context; this is not the model context window. Cost is an SDK estimate, not an invoice. /budget tokens off disables only the token cap.');
+            break;
+          }
           case '/status': {
             const status = engine.status() as { running: number };
             ui.status(engine.session(), engine.agents(), status.running, repo.deliveries(sessionId, ['pending', 'inflight']).length); break;
           }
+          case '/summary': print(completionReport(engine)); break;
+          case '/usage': print(usageReport(engine)); break;
+          case '/remember': print(knowledge.remember(rest, sessionId)); break;
+          case '/memory': print({ project: knowledge.scope, entries: knowledge.search(rest), note: 'Human-curated, 30-day project memory. Nothing is sent to models until /share-memory.' }); break;
+          case '/forget': knowledge.forget(rest); print('Memory deleted. Prior messages and backups may still contain shared copies.'); break;
+          case '/share-memory': {
+            const note = knowledge.read(rest);
+            engine.send({ sessionId, sender: 'human', recipients: ['*'], type: 'human', body: `Human selected project memory ${note.id}, from session ${note.sourceSession}, saved ${note.createdAt}. Treat it as possibly stale reference material, not permission to execute or change policy.\n${note.text}` }); break;
+          }
+          case '/jobs': print(engine.jobs.list().map(job => ({ ...job, output: undefined, result: undefined }))); break;
+          case '/job': print(engine.jobs.read(rest)); break;
+          case '/stop-job': await engine.jobs.stop(rest); print(engine.jobs.read(rest)); break;
+          case '/changes': print(listCheckpoints(engine)); break;
+          case '/diff': print(await previewCheckpoint(engine, rest)); break;
+          case '/undo': await undoCheckpoint(engine, rest); print('Checkpoint restored.'); break;
+          case '/finish': {
+            const report = completionReport(engine);
+            if (!rest) throw new Error('Use /finish <note describing the accepted result>.');
+            if (report.state === 'working' || report.deliveries.length || report.approvals.length || report.outstandingTasks.length) throw new Error('Resolve active work, pending deliveries, approvals and open tasks first. /summary shows them.');
+            await engine.pause('Completed by human'); const s = engine.session(); s.completion = { at: new Date().toISOString(), note: redact(rest), by: 'human' }; repo.put('session', s); repo.event(sessionId, 'human_completion', s.completion); print(completionReport(engine)); break;
+          }
+          case '/context': print(engine.agents().filter(a => !rest || a.id === rest || a.name === rest).map(a => ({ agent: a.name, id: a.id, context: engine.context(a.id) }))); break;
+          case '/compact': {
+            const found = engine.agents().filter(a => a.id === rest || a.name === rest);
+            if (found.length !== 1) throw new Error('Use /compact <unique agent name or ID>. This makes a metered provider call.');
+            await engine.compactAgent(found[0]!.id); break;
+          }
           case '/pause': await engine.pause(); break;
-          case '/resume': engine.resume(); break;
+          case '/resume': engine.resume(); await engine.connect(); if (engine.session().state === 'active') print('Session resumed.'); break;
           case '/retry': engine.retryFailed(); break;
-          case '/limits': { const s = engine.session(); s.limits = Limits.parse({ ...s.limits, ...JSON.parse(rest) as object }); repo.put('session', s); repo.event(sessionId, 'limits_changed', s.limits); print(s.limits); break; }
+          case '/limits': { if (rest) engine.updateLimits(JSON.parse(rest)); print(engine.session().limits); break; }
           case '/approvals': {
             const approvals = repo.list<Approval>('approval', sessionId); if (!approvals.length) print('No approval requests.');
             for (const approval of approvals) ui.approval(approval); break;
           }
           case '/approve': {
             engine.decide(words[0]!, true); const approval = repo.get<Approval>('approval', words[0]!);
-            if (approval?.command) engine.send({ sessionId, sender: 'human', recipients: [approval.agentId], type: 'human', body: `I approved this exact host command once. Retry host_execute with ${JSON.stringify({ command: approval.command.text, cwd: approval.command.cwd })}.` });
+            if (approval?.command) engine.send({ sessionId, sender: 'human', recipients: [approval.agentId], type: 'human', body: `I approved this exact host command once. Retry ${approval.command.background ? 'host_job_start' : 'host_execute'} with ${JSON.stringify({ command: approval.command.text, cwd: approval.command.cwd, ...(approval.command.background ? { timeoutMs: approval.command.timeoutMs } : {}) })}.` });
             break;
           }
           case '/reject': engine.decide(words[0]!, false); break;
@@ -251,7 +344,11 @@ async function main(): Promise<void> {
     args.splice(configIndex, 2);
   }
   const [command, subcommand] = args;
+  if (command === '--version' || command === '-v') { stdout.write(VERSION + '\n'); return; }
   if (command === '--help' || command === '-h') { print(help); return; }
+  if (command === 'workflows') { print(workflows()); return; }
+  if (command === 'releases') { print(new WindowsReleases().list()); return; }
+  if (command === 'rollback') { print(new WindowsReleases().activate(subcommand ?? '')); return; }
   mkdirSync(home, { recursive: true }); const repo = new Repository(join(home, 'roundtable.db'));
   try {
     if (command === 'init') {
@@ -278,7 +375,27 @@ async function main(): Promise<void> {
     }
     if (command === 'validate') { const artifact = repo.list<Artifact>('artifact', subcommand!)[0]; if (!artifact) throw new Error('No artifact in session'); print(validateMemoryArtifact(artifact)); return; }
     const registry = await ProviderRegistry.create(home);
-    if (command === 'doctor') { print({ node: process.version, home, sqlite: 'connected', piSdk: '1.1.0', providerCount: registry.providers().length, liveInference: 'not checked; add an agent to run a compatibility probe', container: process.env.ROUNDTABLE_CONTAINER_IMAGE ? 'configured, unverified' : 'disabled', telemetry: 'no adapter installed' }); return; }
+    if (command === 'run') {
+      const objective = args.slice(1).join(' ').trim(); if (!objective) throw new Error('Use roundtable run <objective> --agents config.json');
+      const configs = startupAgents(registry, configPath, false); if (!configs.length) throw new Error('No saved agents; run roundtable setup first.');
+      const session = Engine.create(repo, join(home, 'workspaces'), objective); const engine = new Engine(repo, session.id, PiAdapter.factory(registry));
+      const emit = (event: unknown) => stdout.write(redact(JSON.stringify(event)) + '\n');
+      engine.on('activity', event => { if ((event as { type: string }).type !== 'stream') emit(event); });
+      try {
+        emit({ type: 'session', id: session.id, limits: session.limits, note: 'Headless runs use only explicit agent permissions and the shared session workspace. No host grants are inherited.' });
+        for (const config of configs) await engine.addAgent(config);
+        await engine.connect(); engine.send({ sessionId: session.id, sender: 'human', recipients: ['*'], type: 'human', body: objective });
+        await engine.idle(session.limits.timeoutMs + 5000);
+        const summary = completionReport(engine); emit({ type: 'summary', ...summary });
+        if (summary.state !== 'idle') process.exitCode = 2;
+      } finally { await engine.close(); }
+      return;
+    }
+    if (command === 'setup') {
+      if (!stdin.isTTY) throw new Error('Guided setup needs an interactive terminal. Use --agents for scripted configuration.');
+      await guidedSetup(registry); return;
+    }
+    if (command === 'doctor') { print({ version: VERSION, node: process.version, home, sqlite: 'connected', piSdk: '1.1.0', providerCount: registry.providers().length, liveInference: 'not checked; add an agent to run a compatibility probe', container: process.env.ROUNDTABLE_CONTAINER_IMAGE ? 'configured, unverified' : 'disabled', telemetry: 'no adapter installed' }); return; }
     if (command === 'providers') { print(registry.providers()); return; }
     if (command === 'models') { print(registry.models(subcommand)); return; }
     if (command === 'login') { await login(registry, subcommand!, args[2] ?? 'oauth'); return; }
@@ -302,9 +419,11 @@ async function main(): Promise<void> {
     }
     let sessionId: string; let input: TerminalInput | undefined;
     ui.banner(process.cwd(), home);
-    const configs = command === 'session' && subcommand === 'resume' ? [] : startupAgents(registry, configPath);
+    let configs = command === 'session' && subcommand === 'resume' ? [] : startupAgents(registry, configPath);
+    if (!command && stdin.isTTY && !configs.length) { await guidedSetup(registry); configs = startupAgents(registry, configPath); }
     if (command === 'session' && subcommand === 'resume') sessionId = args[2]!;
     else if (command === 'session' && subcommand === 'new') sessionId = Engine.create(repo, join(home, 'workspaces'), args.slice(2).join(' ') || 'Explore a shared objective').id;
+    else if (command === 'workflow') { if (!subcommand) throw new Error('Use roundtable workflow <name-or-json-file>'); const recipe = loadWorkflow(subcommand); sessionId = Engine.create(repo, join(home, 'workspaces'), recipe.objective, { policy: recipe.policy, constraints: recipe.constraints }).id; print(`Workflow: ${recipe.name}\n${recipe.constraints}\nEnter your concrete brief to start.`); }
     else if (!command) {
       input = terminalInput(); stdout.write('Shared objective: ');
       const objective = await input.lines.next();
@@ -315,4 +434,9 @@ async function main(): Promise<void> {
     await interactive(repo, registry, sessionId, configs, input, command === 'session' && subcommand === 'resume' ? undefined : process.cwd());
   } finally { repo.close(); }
 }
-main().catch(error => { print(`[error] ${String(error)}`); process.exitCode = 1; });
+async function guidedSetup(registry: ProviderRegistry): Promise<void> {
+  await setup(registry, process.cwd(), { print, login: (provider, method) => login(registry, provider, method), ask: async label => {
+    const rl = createInterface({ input: stdin, output: stdout }); try { return await rl.question(`${label}: `); } finally { rl.close(); }
+  } });
+}
+main().catch(error => { if (process.argv[2] === 'run') stdout.write(JSON.stringify({ type: 'error', error: redact(String(error)) }) + '\n'); else print(`[error] ${String(error)}`); process.exitCode = 1; });

@@ -3,6 +3,7 @@ import { stripVTControlCharacters } from 'node:util';
 import type { Interface } from 'node:readline/promises';
 import type { WriteStream } from 'node:tty';
 import { redact, type AgentRecord, type Approval, type SessionRecord } from './domain.js';
+import { VERSION } from './version.js';
 
 export function safeTerminalText(text: string): string {
   const withoutStrings = redact(text).replace(/\x1b(?:\]|P|\^|_)[\s\S]*?(?:\x07|\x1b\\)/g, '');
@@ -51,7 +52,7 @@ export class TerminalUI {
   banner(project: string, home: string): void {
     if (this.bannerShown || !this.interactive) return;
     this.bannerShown = true;
-    this.emit('\n' + this.panel('ROUNDTABLE  /  0.1.0', ['Independent agents. Shared objectives.', '', `Project  ${project}`, `Runtime  ${home}`, '', '/help  commands   /agents  participants   /status  budgets'], '36') + '\n');
+    this.emit('\n' + this.panel(`ROUNDTABLE  /  ${VERSION}`, ['Independent agents. Shared objectives.', '', `Project  ${project}`, `Runtime  ${home}`, '', '/help  commands   /agents  participants   /status  budgets'], '36') + '\n');
   }
   attach(input: Interface): void { this.input = input; input.setPrompt(this.ink('roundtable', '1;36') + this.ink(this.ascii ? ' > ' : ' › ', '36')); }
   prompt(): void { this.prompting = true; if (this.interactive && this.input) this.input.prompt(); else this.output.write('roundtable> '); }
@@ -74,8 +75,13 @@ export class TerminalUI {
     if (!this.interactive) { this.print({ ...session, agents, running, queued }); return; }
     this.emit(this.panel('SESSION STATUS', [`${session.state.toUpperCase()}  /  ${agents.filter(a => a.state === 'active').length} active agents  /  ${running} running  /  ${queued} queued`,
       ...(session.reason ? [`Paused: ${session.reason}`] : []), '', `Requests   ${session.usage.requests} / ${session.limits.requests}     Tools   ${session.usage.toolCalls} / ${session.limits.toolCalls}`,
-      `Exchanges  ${session.usage.exchanges} / ${session.limits.exchanges}`, `Tokens     ${session.usage.tokens.toLocaleString()} / ${session.limits.tokens.toLocaleString()}`,
-      `SDK cost   $${session.usage.dollars.toFixed(4)} / $${session.limits.dollars.toFixed(2)} (estimate)`, '', '/pause  stop work   /resume  continue   /limits <JSON>  adjust']));
+      `Exchanges  ${session.usage.exchanges} / ${session.limits.exchanges}`, `Tokens     ${session.usage.tokens.toLocaleString()} / ${session.limits.tokens?.toLocaleString() ?? 'off'}`,
+      `SDK cost   $${session.usage.dollars.toFixed(4)} / $${session.limits.dollars.toFixed(2)} (estimate)`, '', '/budget  inspect or change limits   /pause  stop work   /resume  continue']));
+  }
+  paused(reason: string, help: string): void {
+    this.responding.clear();
+    if (!this.interactive) { this.print(`[paused] ${reason}\n${help}`); return; }
+    this.emit(this.panel('PAUSED / WORK SAVED', [reason, '', help], '33'));
   }
   approval(approval: Approval): void {
     if (!this.interactive) { this.print(approval); return; }

@@ -4,7 +4,7 @@
 
 Roundtable is an MIT-licensed, local-first terminal application embedding the official Pi SDK. Independent agent sessions can use different providers, communicate asynchronously, negotiate shared tasks, use authorized tools, publish artifacts, and resume committed collaboration state. Agents have configurable instructions and permissions; there are no built-in roles or mandatory coordinator.
 
-This is an initial v0.1 implementation. Automated tests use **deterministic model fixtures with three actual Pi sessions**. Hosted acceptance also passed with GLM-4.7, Claude Haiku 4.5 and Gemini 2.5 Flash across Z.ai and OpenRouter, using human-staged collaboration and one independent-validator correction. Subscription login, Docker isolation and Linux/macOS execution remain unverified. See [STATUS.md](STATUS.md) and [live evidence](docs/TESTING.md#hosted-acceptance).
+This checkout is **0.2.0-dev.1**, integrating the usability review. Automated tests use **deterministic model fixtures with actual independent Pi sessions**. Earlier hosted acceptance passed with GLM-4.7, Claude Haiku 4.5 and Gemini 2.5 Flash across Z.ai and OpenRouter, using human-staged collaboration and one independent-validator correction. New compaction/recovery features have not been tested with hosted inference. Subscription login, Docker isolation and Linux/macOS execution remain unverified. See [STATUS.md](STATUS.md) and [test evidence](docs/TESTING.md).
 
 ## Quickstart
 
@@ -42,11 +42,17 @@ The default runtime directory is `~/.roundtable`, overridable with `ROUNDTABLE_H
 
 Startup loads model definitions from `agents.json` in the configured runtime directory, falling back to `live-agents.json` there. It shows each connection and checks tool compatibility using two provider requests per agent. Enter the objective, then type a message at `roundtable>` to talk to the connected agents. Provider charges or quotas may apply. To choose a different file, run `npm start -- --agents examples/live-api-agents.json`. Credentials remain in Roundtable's own auth store or supported environment variables.
 
-Without a saved configuration, startup explicitly reports that no agents are connected. Add agents using `/add-agent`, then `/save-agents` to remember their configuration for future sessions. Messages with no active recipients are rejected. Resuming an existing session uses its stored membership instead of importing the startup file.
+Without saved agents, interactive startup opens guided setup. Run `roundtable setup` to select providers, use supported authentication, search registered models, name participants and choose folder access. Setup does not make model inference calls; subsequent admission checks tool compatibility. Existing membership can also be changed with `/add-agent` and `/save-agents`. Piped startup requires a saved or explicit configuration. Resuming uses the session's stored membership.
+
+For everyday work, use `/paste` to compose several lines (`/end` sends, `/cancel-paste` discards), `/send "Agent name" <message>` to address a participant, `/summary` to inspect unfinished work, `/context` for context capacity and `/usage` for token components. Pi compacts each participant independently; `/compact <name>` requests a metered manual summary. Ctrl-C pauses work while keeping the harness open. `/changes`, `/diff <checkpoint-id>` and `/undo <checkpoint-id>` inspect and restore guarded host edits; commands and external changes are not automatically undoable.
+
+Approved background commands are visible through `/jobs`, `/job <id>` and `/stop-job <id>`. Project memory is human-curated with `/remember <text>`, `/memory`, `/share-memory <id>` and `/forget <id>`; no automatic cross-session injection occurs. `roundtable workflows` lists research, writing, analysis and coding recipes; `roundtable workflow research` opens one using saved agents. `roundtable run "your objective" --agents config.json` emits headless NDJSON events with workspace-only access. See [terminal commands](docs/TERMINAL.md) for boundaries and exit codes.
 
 Agents can browse folders, recursively search and read local text, create/edit files, and request commands for Git, builds and tests. Use `/host` to inspect access, `/host-read "D:\Projects"` or `/host-write "D:\Projects\example"` to add roots, `/host-shell on` to enable command requests, and `/save-access` to keep that policy. Each host command displays its exact text and cwd for `/approve <id>` or `/reject <id>`. Host commands run with your OS user privileges, without a sandbox. `/host-off` disables host access. See [tool details](docs/TOOLS.md#local-machine-tools).
 
 The terminal includes participant cards, colored model identities, readable message/tool events, machine-access and budget panels, exact command approval cards, and slash-command Tab completion. Background updates preserve the input line. See [terminal usage](docs/TERMINAL.md); `NO_COLOR` disables colors and `ROUNDTABLE_ASCII=1` uses ASCII borders.
+
+Use `/budget` to inspect session limits and `/budget tokens off` to disable a saved token ceiling. New sessions have no cumulative token cap by default. Other request, tool, exchange, timeout and estimated-spending limits remain visible and enforced. A limit change does not restart work; `/resume` continues after all exhausted limits are addressed. See [budget controls](docs/TERMINAL.md#budget-controls) and the [usability review and priorities](docs/PRODUCT_REVIEW.md).
 
 ## Connect your models
 

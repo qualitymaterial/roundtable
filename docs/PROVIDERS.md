@@ -60,3 +60,9 @@ Token counts are provider-reported where supplied. Dollar values come from Pi's 
 Before a live demo, run `node dist/cli.js demo --live examples/live-agents.json --check`. All three model IDs and configured authentication must pass local preflight before any session or provider request is created. This does not validate credentials with a server. Admission checks the nonce tool call and returned receipt. Every returned admission response records usage, including incompatible responses; token/spend exhaustion prevents the next probe.
 
 Compatible endpoint `apiKeyEnv` names are converted to explicit Pi `$VARIABLE` references internally. A missing variable reports unconfigured authentication; the variable name is never sent as the credential. Tests verify the actual Authorization header through Pi's production HTTP transport. The three-provider fixture is scripted locally and does not establish compatibility with hosted subscriptions or particular inference servers.
+
+## Context, retry and usage controls
+
+Pi native independent-session compaction is enabled; both manual and automatic summary requests use Roundtable's provider guard and usage ledger. Two bounded transient agent retries are enabled with 1-second base delay and a 5-second maximum agent retry delay; hidden provider transport retries are disabled. Retries use the same provider/model and do not grant tools or replay completed tool calls. Compatibility probes, ordinary responses and compaction all consume session request/usage budgets.
+
+`/usage` displays available input, output, cache-read and cache-write totals by participant with source labels. Older records lack component fields and are not reconstructed. SDK price estimates are not invoices; zero-price custom endpoints may have unknown operating cost. No automatic fallback sends conversation data to a different provider.

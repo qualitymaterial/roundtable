@@ -111,7 +111,7 @@ test('tool calls are idempotent by agent and call ID', async () => {
 test('resource budgets pause without losing committed messages', async () => {
   const f = fixture(undefined, { limits: { exchanges: 1 } }); try {
     const a = await agent(f.engine); const send = (body: string) => f.engine.send({ sender: 'human', sessionId: f.session.id, recipients: [a.id], type: 'human', body });
-    send('one'); assert.throws(() => send('two'), /Budget/); assert.equal(f.engine.session().state, 'paused'); assert.equal(f.repo.messages(f.session.id).length, 1);
+    send('one'); assert.throws(() => send('two'), /Exchange budget reached: 1 \/ 1/); assert.equal(f.engine.session().state, 'paused'); assert.equal(f.repo.messages(f.session.id).length, 1);
   } finally { await f.close(); }
 });
 test('redaction removes configured credentials and bearer tokens', () => {

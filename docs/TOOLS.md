@@ -48,3 +48,9 @@ Container execution needs Docker and a trusted preinstalled ROUNDTABLE_CONTAINER
 `ToolProvider.register(registry)` can add/remove tools using TypeBox schemas and permission identifiers. See examples/approved-tool.mjs. `/load-tool <path>` is a human-only explicit import; it runs code with host privileges. Pause/resume agents to refresh their Pi definitions after registration. Removing a tool makes existing definitions fail at invocation. Modules are not automatically reloaded after restart. An untrusted module is not safely confined by the registry.
 
 Agents can publish candidate tool source as a nonexecuting artifact and request a capability. They cannot import it or enable it for peers. A human must inspect/validate source and dependencies, then explicitly load the trusted module and approve capabilities. Automated executable-tool certification, marketplace installation and a companion ordinary-Pi extension remain planned. Do not execute source just because another agent produced it.
+
+## Checkpoints and background commands
+
+Successful `host_write` returns a checkpoint ID. Human `/diff` and `/undo` operate on applied checkpoints with fresh authorization and hash checks. Only this direct edit tool is covered; shell effects and separate workspace edits are not automatically reversible.
+
+`host_job_start(command,cwd,timeoutMs?)` uses `host.execute` and requests single-use approval bound to all invocation fields, including background mode. It returns a durable ID immediately after approval. `host_job_read(id)` returns bounded state/output, and `host_job_stop(id)` cancels a managed job. At most four jobs run concurrently, with timeouts from 1 second to 1 hour (10 minutes by default). Jobs are scoped to a session. The executor has the same unsandboxed OS privileges and best-effort process cleanup as foreground host execution.

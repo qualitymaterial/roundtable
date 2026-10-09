@@ -1,15 +1,25 @@
 {
   "name": "roundtable",
-  "version": "0.1.0",
+  "version": "0.2.0-dev.1",
   "description": "Independent agents. Shared objectives. Universal capabilities. Real collaboration.",
   "license": "MIT",
-  "repository": { "type": "git", "url": "https://github.com/qualitymaterial/roundtable.git" },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/qualitymaterial/roundtable.git"
+  },
   "homepage": "https://github.com/qualitymaterial/roundtable#readme",
-  "bugs": { "url": "https://github.com/qualitymaterial/roundtable/issues" },
+  "bugs": {
+    "url": "https://github.com/qualitymaterial/roundtable/issues"
+  },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "private": true,
   "bin": {
     "roundtable": "dist/cli.js"

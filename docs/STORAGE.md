@@ -25,3 +25,9 @@ SQLite and Pi JSONL are separate stores. A crash can happen between side effect,
 `session verify <id>` reads committed evidence and Pi contexts without connecting providers or recovering deliveries. Successful demo runs append a `collaboration_acceptance` event. Verification hashes agent identities, ordered messages, delivery state, tasks, artifacts and context checksums; `matchesLastAcceptance` compares this snapshot with that event. Reopening unchanged state preserves the hash. Continuing work changes it; the earlier event remains historical evidence. These checks are structural and do not authenticate model output or protect against an operator editing storage.
 
 `session export` produces session/agent metadata, messages/deliveries, tasks, artifact contents, notes, approvals and audit events. It excludes auth.json and Pi's raw context files. Inspect exported conversation content for sensitive data before sharing. Back up the complete data directory while the app is stopped; do not copy only the SQLite main file while WAL writes are active.
+
+## New durable records
+
+The existing generic entity repository stores `checkpoint`, `job` and `knowledge` records without changing older entity data. The ownership component creates `session_owners(session_id,pid,host,token)` and claims it transactionally before inflight recovery. Session records may include human completion metadata; new usage events optionally include token components. Older records remain readable.
+
+Checkpoint original file text stays private and is not included in ordinary session exports. Knowledge is scoped to a canonical launch folder and intentionally excluded from automatic session/model context. Pi compaction retains original JSONL entries plus a compaction record; agent histories never merge. SQLite and JSONL do not form one transaction, so crash recovery remains at least once.

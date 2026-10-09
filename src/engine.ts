@@ -5,20 +5,30 @@ import { z } from 'zod';
 import { Repository } from './storage.js';
 import { ToolRegistry, installTools } from './tools.js';
 import { installNetworkTools } from './network-tools.js';
-import { installHostTools } from './host-tools.js';
+import { installHostTools, executeHost } from './host-tools.js';
+import { BackgroundJobs } from './jobs.js';
+import { budgetMetrics, budgetReason, exhaustedBudgets, budgetHelp } from './budgets.js';
+import { acquireSession } from './session-lock.js';
 import { AgentInput, Limits, MessageInput, id, timestamp, redact, type AgentAdapter, type AgentRecord, type Approval, type Message, type MessageDraft, type SessionRecord } from './domain.js';
 
 export type AdapterFactory = (agent: AgentRecord, engine: Engine) => Promise<AgentAdapter>;
 export class Engine extends EventEmitter {
   readonly tools: ToolRegistry;
+  readonly jobs: BackgroundJobs;
   private adapters = new Map<string, AgentAdapter>();
   private active = new Map<string, Promise<void>>();
   private scheduled = false;
   private closing = false;
   private sessionTimer?: ReturnType<typeof setTimeout>;
   private started = Date.now();
+  private warned = new Set<string>();
+  private stopping?: Promise<void>;
+  private releaseOwnership?: () => void;
   constructor(readonly repo: Repository, readonly sessionId: string, readonly factory: AdapterFactory, recover = true) {
-    super(); this.session(); if (recover) this.repo.recover(sessionId); this.tools = new ToolRegistry(this); installTools(this.tools); installNetworkTools(this.tools); installHostTools(this.tools);
+    super(); this.session();
+    if (recover) { this.releaseOwnership = acquireSession(repo.db, sessionId); this.repo.recover(sessionId); }
+    this.jobs = new BackgroundJobs(repo, sessionId, executeHost, recover);
+    this.tools = new ToolRegistry(this); installTools(this.tools); installNetworkTools(this.tools); installHostTools(this.tools);
   }
   static create(repo: Repository, workspaceRoot: string, objective: string, options: { limits?: z.input<typeof Limits>; policy?: SessionRecord['policy']; constraints?: string; permissions?: string[] } = {}): SessionRecord {
     if (!objective.trim() || objective.length > 12000) throw new Error('Objective must be 1–12000 characters');
@@ -31,6 +41,15 @@ export class Engine extends EventEmitter {
   session(): SessionRecord { const record = this.repo.get<SessionRecord>('session', this.sessionId); if (!record) throw new Error('Session not found'); return record; }
   agents(): AgentRecord[] { return this.repo.list<AgentRecord>('agent', this.sessionId); }
   status(): unknown { return { ...this.session(), agents: this.agents(), deliveries: this.repo.deliveries(this.sessionId, ['pending', 'inflight', 'failed']), running: this.active.size }; }
+  context(agentId: string): unknown { return this.adapters.get(agentId)?.context?.() ?? { available: false }; }
+  async compactAgent(agentId: string): Promise<unknown> {
+    if (this.session().state !== 'active') throw new Error('Resume the session before compacting; compaction makes a metered provider call.');
+    if (this.active.has(agentId)) throw new Error('Wait for this agent to finish before compacting.');
+    const adapter = this.adapters.get(agentId); if (!adapter?.compact) throw new Error('Agent is not connected or does not support compaction');
+    const operation = adapter.compact(); const job = operation.then(() => {}, () => {});
+    this.active.set(agentId, job);
+    try { return await operation; } finally { this.active.delete(agentId); this.kick(); }
+  }
   authorized(agent: AgentRecord, permission: string): boolean {
     const current = this.repo.get<AgentRecord>('agent', agent.id);
     return current?.sessionId === this.sessionId && current.state === 'active' && current.permissions.includes(permission) && this.session().permissions.includes(permission);
@@ -39,26 +58,57 @@ export class Engine extends EventEmitter {
     const session = this.session();
     if (session.state !== 'active' && !admission) throw new Error(`Session paused: ${session.reason ?? 'human request'}`);
     if (Date.now() - this.started >= session.limits.timeoutMs) { void this.pause('Session timeout'); throw new Error('Session timeout'); }
-    if (session.usage[metric] + amount > session.limits[metric]) { void this.pause(`Budget reached: ${metric}`); throw new Error(`Budget reached: ${metric}`); }
+    const limit = session.limits[metric];
+    if (limit !== null && session.usage[metric] + amount > limit) {
+      const reason = budgetReason(session, metric); void this.pause(reason, true); throw new Error(reason);
+    }
     session.usage[metric] += amount; this.repo.put('session', session);
+    this.warnBudget();
   }
   request(agent: AgentRecord, admission = false): void {
     const session = this.session(); const count = session.providerRequests?.[agent.provider] ?? 0;
-    if (session.usage.tokens >= session.limits.tokens || session.usage.dollars >= session.limits.dollars) {
-      void this.pause('Token or estimated spending budget reached'); throw new Error('Token or estimated spending budget reached');
+    const tokensReached = session.limits.tokens !== null && session.usage.tokens >= session.limits.tokens;
+    if (tokensReached || session.usage.dollars >= session.limits.dollars) {
+      const reason = budgetReason(session, tokensReached ? 'tokens' : 'dollars');
+      void this.pause(reason, true); throw new Error(reason);
     }
     const limit = session.limits.providerRequests?.[agent.provider];
-    if (limit !== undefined && count >= limit) { void this.pause(`Provider request budget reached: ${agent.provider}`); throw new Error('Provider request budget reached'); }
+    if (limit !== undefined && count >= limit) {
+      const reason = `Provider request budget reached: ${agent.provider} (${count} / ${limit})`;
+      void this.pause(reason, true); throw new Error(reason);
+    }
     this.consume('requests', 1, admission);
     const updated = this.session(); updated.providerRequests = { ...updated.providerRequests, [agent.provider]: count + 1 }; this.repo.put('session', updated);
     this.repo.event(this.sessionId, 'provider_request', { agentId: agent.id, provider: agent.provider, model: agent.model, admission });
   }
-  recordUsage(agentId: string, tokens: number, dollars: number, source: string): void {
+  recordUsage(agentId: string, tokens: number, dollars: number, source: string, details?: Record<string, number>): void {
     const session = this.session();
     session.usage.tokens += Math.max(0, Number.isFinite(tokens) ? tokens : 0);
     session.usage.dollars += Math.max(0, Number.isFinite(dollars) ? dollars : 0);
-    this.repo.put('session', session); this.repo.event(this.sessionId, 'usage', { agentId, tokens, dollars, source });
-    if (session.usage.tokens >= session.limits.tokens || session.usage.dollars >= session.limits.dollars) void this.pause('Token or estimated spending budget reached');
+    this.repo.put('session', session); this.repo.event(this.sessionId, 'usage', { agentId, tokens, dollars, source, details });
+    const tokensReached = session.limits.tokens !== null && session.usage.tokens >= session.limits.tokens;
+    if (tokensReached || session.usage.dollars >= session.limits.dollars) {
+      void this.pause(budgetReason(session, tokensReached ? 'tokens' : 'dollars'), true);
+    } else this.warnBudget();
+  }
+  private warnBudget(): void {
+    const session = this.session(); if (session.state !== 'active') return;
+    for (const metric of budgetMetrics) {
+      const key = `${metric}:${session.limits[metric]}`;
+      const limit = session.limits[metric];
+      if (limit === null || session.usage[metric] < limit * 0.8 || this.warned.has(key)) continue;
+      this.warned.add(key);
+      const text = `${metric}: ${session.usage[metric].toLocaleString('en-US')} / ${limit.toLocaleString('en-US')} used. Approaching the session limit; /budget shows recovery options.`;
+      this.repo.event(this.sessionId, 'budget_warning', { metric, text }); this.emit('activity', { type: 'budget_warning', text });
+    }
+  }
+  updateLimits(input: unknown): void {
+    const parsed = Limits.partial().strict().parse(input);
+    // Zod defaults also apply inside partial objects. Only explicitly supplied keys may change.
+    const patch = Object.fromEntries(Object.keys(input as object).filter(key => (input as Record<string, unknown>)[key] !== undefined).map(key => [key, parsed[key as keyof typeof parsed]]));
+    const session = this.session();
+    session.limits = Limits.parse({ ...session.limits, ...patch }); this.repo.put('session', session);
+    this.repo.event(this.sessionId, 'limits_changed', session.limits);
   }
   async addAgent(input: z.input<typeof AgentInput>, validate = true): Promise<AgentRecord> {
     const parsed = AgentInput.parse(input);
@@ -73,11 +123,20 @@ export class Engine extends EventEmitter {
     } catch (error) { agent.state = 'paused'; this.repo.put('agent', agent); this.repo.event(this.sessionId, 'agent_failed', { agentId: agent.id, error: redact(String(error)) }); throw error; }
   }
   async connect(): Promise<void> {
+    // A restored paused session must remain inspectable without paid compatibility probes.
+    if (this.session().state !== 'active') return;
     for (const agent of this.agents().filter(a => a.state === 'active')) {
+      if (this.session().state !== 'active') break;
       if (this.adapters.has(agent.id)) continue;
       try { this.adapters.set(agent.id, await this.factory(agent, this)); }
-      catch (error) { agent.state = 'paused'; this.repo.put('agent', agent); this.repo.event(this.sessionId, 'agent_failed', { agentId: agent.id, error: redact(String(error)) }); this.emit('activity', { type: 'error', agentId: agent.id, error: redact(String(error)) }); }
+      catch (error) {
+        const budget = this.session().pauseKind === 'budget';
+        agent.state = budget ? 'active' : 'paused'; this.repo.put('agent', agent);
+        this.repo.event(this.sessionId, budget ? 'agent_connection_interrupted' : 'agent_failed', { agentId: agent.id, error: redact(String(error)) });
+        if (!budget) this.emit('activity', { type: 'error', agentId: agent.id, error: redact(String(error)) });
+      }
     }
+    if (this.session().state !== 'active') return;
     this.started = Date.now(); clearTimeout(this.sessionTimer);
     this.sessionTimer = setTimeout(() => { void this.pause('Session timeout'); }, this.session().limits.timeoutMs); this.sessionTimer.unref(); this.kick();
   }
@@ -141,6 +200,7 @@ export class Engine extends EventEmitter {
   private dispatch(): void {
     if (this.closing || this.session().state !== 'active') return;
     for (const delivery of this.repo.deliveries(this.sessionId)) {
+      if (this.session().state !== 'active') break;
       if (this.active.size >= this.session().limits.concurrency) break;
       if (this.active.has(delivery.agentId)) continue;
       const agent = this.agents().find(a => a.id === delivery.agentId && a.state === 'active');
@@ -156,22 +216,34 @@ export class Engine extends EventEmitter {
     try {
       await adapter.prompt(JSON.stringify({ objective: this.session().objective, policy: this.session().policy, constraints: this.session().constraints, incoming: message }));
       const current = this.repo.get<AgentRecord>('agent', agent.id);
-      this.repo.delivery(message.id, agent.id, this.session().state === 'active' && current?.state === 'active' ? 'acknowledged' : 'pending');
+      const session = this.session();
+      this.repo.delivery(message.id, agent.id, !this.closing && (session.state === 'active' || session.pauseKind === 'budget') && current?.state === 'active' ? 'acknowledged' : 'pending');
     } catch (error) {
       const paused = this.session().state !== 'active' || this.closing || this.repo.get<AgentRecord>('agent', agent.id)?.state !== 'active';
       this.repo.delivery(message.id, agent.id, paused ? 'pending' : 'failed', String(error));
-      this.repo.event(this.sessionId, 'delivery_error', { agentId: agent.id, messageId: message.id, error: redact(String(error)) });
-      this.emit('activity', { type: 'error', agentId: agent.id, error: redact(String(error)) });
+      this.repo.event(this.sessionId, paused ? 'delivery_interrupted' : 'delivery_error', { agentId: agent.id, messageId: message.id, error: redact(String(error)) });
+      if (!paused) this.emit('activity', { type: 'error', agentId: agent.id, error: redact(String(error)) });
     } finally { clearTimeout(timer); }
   }
-  async pause(reason = 'Human request'): Promise<void> {
-    const session = this.session(); session.state = 'paused'; session.reason = reason; this.repo.put('session', session);
+  async pause(reason = 'Human request', budget = false): Promise<void> {
+    const session = this.session();
+    if (session.state === 'paused') {
+      if (budget || session.pauseKind !== 'budget') return this.stopping;
+      // A human can still cancel calls that were finishing at a budget boundary.
+      session.pauseKind = 'manual'; this.repo.put('session', session);
+      this.stopping = Promise.all([...this.adapters.values()].map(a => a.abort()).concat(this.jobs.close())).then(() => {}); return this.stopping;
+    }
+    session.state = 'paused'; session.reason = reason; session.pauseKind = budget ? 'budget' : 'manual'; this.repo.put('session', session);
     this.repo.event(this.sessionId, 'paused', { reason }); clearTimeout(this.sessionTimer);
-    this.emit('activity', { type: 'system', text: `Paused: ${reason}` });
-    await Promise.all([...this.adapters.values()].map(a => a.abort()));
+    this.emit('activity', { type: 'paused', text: reason });
+    // Let responses already paid for finish. Execution guards block all new calls/tools.
+    if (!budget) { this.stopping = Promise.all([...this.adapters.values()].map(a => a.abort()).concat(this.jobs.close())).then(() => {}); await this.stopping; }
   }
   resume(): void {
-    const session = this.session(); session.state = 'active'; delete session.reason; this.repo.put('session', session); this.started = Date.now();
+    const session = this.session(); const exhausted = exhaustedBudgets(session);
+    if (exhausted.length) throw new Error(`${exhausted.join('; ')}. ${budgetHelp}`);
+    if (this.active.size) throw new Error('Wait for current responses to finish before resuming. /status shows running work.');
+    session.state = 'active'; delete session.reason; delete session.pauseKind; delete session.completion; this.repo.put('session', session); this.started = Date.now();
     clearTimeout(this.sessionTimer); this.sessionTimer = setTimeout(() => { void this.pause('Session timeout'); }, session.limits.timeoutMs); this.sessionTimer.unref(); this.kick();
   }
   retryFailed(): void { for (const d of this.repo.deliveries(this.sessionId, ['failed'])) this.repo.delivery(d.messageId, d.agentId, 'pending'); this.kick(); }
@@ -186,7 +258,8 @@ export class Engine extends EventEmitter {
   }
   export(): unknown { return { session: this.session(), agents: this.agents(), messages: this.repo.messages(this.sessionId, undefined, Number.MAX_SAFE_INTEGER), deliveries: this.repo.deliveries(this.sessionId, ['pending', 'inflight', 'acknowledged', 'failed']), tasks: this.repo.list('task', this.sessionId), artifacts: this.repo.list('artifact', this.sessionId), notes: this.repo.list('note', this.sessionId), approvals: this.repo.list('approval', this.sessionId), events: this.repo.events(this.sessionId) }; }
   async close(): Promise<void> {
-    this.closing = true; clearTimeout(this.sessionTimer); await Promise.all([...this.adapters.values()].map(a => a.abort()));
+    this.closing = true; clearTimeout(this.sessionTimer); await Promise.all([...this.adapters.values()].map(a => a.abort()).concat(this.jobs.close()));
     await Promise.all(this.active.values()); for (const adapter of this.adapters.values()) adapter.dispose(); this.adapters.clear();
+    this.releaseOwnership?.(); this.releaseOwnership = undefined;
   }
 }

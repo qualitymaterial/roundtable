@@ -42,7 +42,7 @@ test('two independent provider adapters pass live admission protocol and execute
     rejectProbe = false;
     const bounded = f.engine.session(); bounded.limits.tokens = bounded.usage.tokens + 1; f.repo.put('session', bounded);
     const beforeRequests = bounded.usage.requests;
-    await assert.rejects(f.engine.addAgent({ name: 'Budgeted', provider: 'fixture-provider-one', model: 'tool-model' }), /spending budget reached/);
+    await assert.rejects(f.engine.addAgent({ name: 'Budgeted', provider: 'fixture-provider-one', model: 'tool-model' }), /Token budget reached/);
     assert.equal(f.engine.session().usage.requests, beforeRequests + 1, 'second probe must not run after the first reaches the token budget');
     assert.equal(f.engine.session().state, 'paused');
   } finally { await f.close(); }

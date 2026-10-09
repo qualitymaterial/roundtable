@@ -6,6 +6,8 @@ import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { id, redact, type Approval, type SessionRecord } from './domain.js';
 import type { ToolRegistry } from './tools.js';
+import type { Engine } from './engine.js';
+import { acquireSession } from './session-lock.js';
 
 export const HostAccess = z.object({ readRoots: z.array(z.string().min(1)).max(32).default([]), writeRoots: z.array(z.string().min(1)).max(32).default([]), shell: z.boolean().default(false) }).strict();
 export type HostPolicy = z.output<typeof HostAccess>;
@@ -51,6 +53,46 @@ async function textFile(path: string, signal: AbortSignal): Promise<string> {
   } finally { await handle.close(); }
 }
 const digest = (content: string) => createHash('sha256').update(content).digest('hex');
+export type Checkpoint = { id: string; sessionId: string; path: string; before: string | null; afterHash: string; createdAt: string; state: 'prepared' | 'applied' | 'undone' };
+export function listCheckpoints(engine: Engine) {
+  return engine.repo.list<Checkpoint>('checkpoint', engine.sessionId).map(({ before, ...entry }) => ({ ...entry, createdFile: before === null }));
+}
+export async function previewCheckpoint(engine: Engine, checkpointId: string): Promise<string> {
+  const entry = engine.repo.get<Checkpoint>('checkpoint', checkpointId);
+  if (!entry || entry.sessionId !== engine.sessionId || entry.state !== 'applied') throw new Error('Unknown applied checkpoint');
+  const path = await hostPath(engine.session(), entry.path);
+  const current = await textFile(path, new AbortController().signal);
+  if (digest(current) !== entry.afterHash) throw new Error('File changed since this checkpoint; inspect the current file before restoring.');
+  const before = (entry.before ?? '').split('\n'); const after = current.split('\n');
+  let start = 0; while (start < before.length && start < after.length && before[start] === after[start]) start++;
+  let endBefore = before.length; let endAfter = after.length;
+  while (endBefore > start && endAfter > start && before[endBefore - 1] === after[endAfter - 1]) { endBefore--; endAfter--; }
+  const removed = before.slice(start, endBefore); const added = after.slice(start, endAfter);
+  const lines = [`--- ${entry.before === null ? '(new file)' : path}`, `+++ ${path}`, `Changed span from line ${start + 1}: ${removed.length} old / ${added.length} new lines`, ...removed.slice(0, 100).map(line => '-' + line), ...added.slice(0, 100).map(line => '+' + line)];
+  if (removed.length > 100 || added.length > 100) lines.push('[Preview truncated to 100 lines per side]');
+  return redact(lines.join('\n').slice(0, 30000));
+}
+export async function undoCheckpoint(engine: Engine, checkpointId: string): Promise<void> {
+  const entry = engine.repo.get<Checkpoint>('checkpoint', checkpointId);
+  if (!entry || entry.sessionId !== engine.sessionId || entry.state !== 'applied') throw new Error('Unknown applied checkpoint');
+  const path = await hostPath(engine.session(), entry.path, true);
+  const release = acquireSession(engine.repo.db, `file:${path}`);
+  try {
+    const signal = new AbortController().signal;
+    if (digest(await textFile(path, signal)) !== entry.afterHash) throw new Error('File changed since this checkpoint; refusing to overwrite subsequent work.');
+    if (entry.before === null) await unlink(path);
+    else {
+      const temp = join(dirname(path), `.roundtable-undo-${id()}`);
+      try {
+        const handle = await open(temp, 'wx', (await stat(path)).mode); try { await handle.writeFile(entry.before, 'utf8'); } finally { await handle.close(); }
+        await hostPath(engine.session(), path, true);
+        if (digest(await textFile(path, signal)) !== entry.afterHash) throw new Error('File changed while preparing restore');
+        await rename(temp, path);
+      } finally { await unlink(temp).catch(() => {}); }
+    }
+    entry.state = 'undone'; engine.repo.put('checkpoint', entry); engine.repo.event(engine.sessionId, 'checkpoint_undone', { id: entry.id, path });
+  } finally { release(); }
+}
 export function installHostTools(registry: ToolRegistry): void {
   const engine = registry.engine;
   const pathSchema = Type.String({ minLength: 1, maxLength: 2000 });
@@ -97,6 +139,12 @@ export function installHostTools(registry: ToolRegistry): void {
   registry.register('host_write', 'Create or replace a UTF-8 file under authorized write roots. Existing files REQUIRE the SHA-256 from host_read; new files require expectedHash="new". No delete tool.', Type.Object({ path: pathSchema, content: Type.String({ maxLength: 256000 }), expectedHash: Type.String({ minLength: 3, maxLength: 64 }) }), 'host.write', async ({ path, content, expectedHash }, { signal }) => {
     const canonical = await hostPath(engine.session(), path, true); signal.throwIfAborted();
     if (Buffer.byteLength(content) > 256000) throw new Error('File exceeds 256 KB');
+    const release = acquireSession(engine.repo.db, `file:${canonical}`);
+    try {
+    const before = expectedHash === 'new' ? null : await textFile(canonical, signal);
+    if (before !== null && digest(before) !== expectedHash) throw new Error('File changed; read it again before editing');
+    const checkpoint: Checkpoint = { id: id(), sessionId: engine.sessionId, path: canonical, before, afterHash: digest(content), createdAt: new Date().toISOString(), state: 'prepared' };
+    engine.repo.put('checkpoint', checkpoint);
     if (expectedHash === 'new') {
       const handle = await open(canonical, 'wx', 0o600); try { await handle.writeFile(content, { encoding: 'utf8', signal }); } finally { await handle.close(); }
     } else {
@@ -110,7 +158,10 @@ export function installHostTools(registry: ToolRegistry): void {
         await rename(temp, canonical);
       } finally { await unlink(temp).catch(() => {}); }
     }
-    return { path: canonical, sha256: digest(content), bytes: Buffer.byteLength(content) };
+    checkpoint.state = 'applied'; engine.repo.put('checkpoint', checkpoint);
+    engine.repo.event(engine.sessionId, 'checkpoint_created', { id: checkpoint.id, path: canonical, afterHash: checkpoint.afterHash });
+    return { path: canonical, sha256: digest(content), bytes: Buffer.byteLength(content), checkpointId: checkpoint.id };
+    } finally { release(); }
   });
   registry.register('host_mkdir', 'Create a single directory under an authorized write root. Parent must already exist.', Type.Object({ path: pathSchema }), 'host.write', async ({ path }, { signal }) => {
     const canonical = await hostPath(engine.session(), path, true); signal.throwIfAborted(); await mkdir(canonical); return { path: canonical };
@@ -128,22 +179,39 @@ export function installHostTools(registry: ToolRegistry): void {
     prior.state = 'consumed'; engine.repo.put('approval', prior); engine.repo.event(engine.sessionId, 'host_command_consumed', { approvalId: prior.id });
     return executeHost(command, canonical, signal);
   });
+  registry.register('host_job_start', 'Request an approved background host command. Returns a durable job ID. Unsandboxed OS privileges; max four jobs, bounded logs. Jobs stop when this harness exits.', Type.Object({ command: Type.String({ minLength: 1, maxLength: 12000 }), cwd: pathSchema, timeoutMs: Type.Optional(Type.Integer({ minimum: 1000, maximum: 3600000 })) }), 'host.execute', async ({ command, cwd, timeoutMs = 600000 }, { agent }) => {
+    if (!engine.session().hostAccess?.shell) throw new Error('Host shell is disabled');
+    const canonical = await hostPath(engine.session(), cwd); if (!(await stat(canonical)).isDirectory()) throw new Error('Command cwd must be a directory');
+    const fingerprint = digest(JSON.stringify({ command, cwd: canonical, agentId: agent.id, background: true, timeoutMs }));
+    const prior = engine.repo.list<Approval>('approval', engine.sessionId).find(a => a.agentId === agent.id && a.command?.fingerprint === fingerprint && ['pending', 'approved'].includes(a.state));
+    if (!prior || prior.state === 'pending') {
+      const approval: Approval = prior ?? { id: id(), sessionId: engine.sessionId, agentId: agent.id, capability: 'host.execute', reason: `Background host command, ${timeoutMs / 1000}s timeout (not sandboxed)`, state: 'pending', command: { text: command, cwd: canonical, fingerprint, background: true, timeoutMs } };
+      if (!prior) { engine.repo.put('approval', approval); engine.repo.event(engine.sessionId, 'host_command_requested', approval); engine.emit('activity', { type: 'approval', text: `${approval.reason}: ${redact(command)}; /approve ${approval.id}` }); }
+      return { approvalRequired: true, approvalId: approval.id, instruction: 'Wait for the human, then retry this exact invocation once.' };
+    }
+    prior.state = 'consumed'; engine.repo.put('approval', prior); return engine.jobs.start(agent.id, command, canonical, timeoutMs);
+  });
+  registry.register('host_job_read', 'Read a session background job and its bounded log.', Type.Object({ jobId: Type.String() }), 'host.execute', ({ jobId }) => engine.jobs.read(jobId));
+  registry.register('host_job_stop', 'Cancel a session background job.', Type.Object({ jobId: Type.String() }), 'host.execute', async ({ jobId }) => { await engine.jobs.stop(jobId); return engine.jobs.read(jobId); });
 }
-async function executeHost(command: string, cwd: string, signal: AbortSignal): Promise<unknown> {
+export async function executeHost(command: string, cwd: string, signal: AbortSignal, timeoutMs = 60000, onOutput?: (output: string) => void): Promise<unknown> {
+  signal.throwIfAborted();
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|LANG|LC_ALL)$/i.test(key)));
   return new Promise((resolveResult, reject) => {
     const shell = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : '/bin/sh';
     const args = process.platform === 'win32' ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command];
-    const child = spawn(shell, args, { cwd, env, signal, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+    // Own cancellation rather than spawn's AbortError: await close before releasing
+    // the job/DB, and terminate the tree before its leader disappears on Windows.
+    const child = spawn(shell, args, { cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
     let output = ''; let stopped: string | undefined;
     const stop = (reason: string) => {
       stopped ??= reason;
-      if (process.platform === 'win32' && child.pid) { const kill = spawn('taskkill.exe', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); kill.on('error', () => child.kill()); }
+      if (process.platform === 'win32' && child.pid) { const kill = spawn(join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'taskkill.exe'), ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' }); kill.on('error', () => child.kill()); kill.on('exit', code => { if (code !== 0) child.kill(); }); }
       else { try { if (child.pid) process.kill(-child.pid, 'SIGKILL'); } catch { child.kill('SIGKILL'); } }
     };
     const abort = () => stop('cancelled'); signal.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(() => stop('60 second timeout'), 60000);
-    const capture = (data: Buffer) => { output += data.toString(); if (Buffer.byteLength(output) > 64000) { output = output.slice(0, 32000); stop('output limit'); } };
+    const timer = setTimeout(() => stop(`${timeoutMs / 1000} second timeout`), timeoutMs);
+    const capture = (data: Buffer) => { output += data.toString(); if (Buffer.byteLength(output) > 64000) { output = output.slice(0, 32000); stop('output limit'); } onOutput?.(redact(output)); };
     child.stdout.on('data', capture); child.stderr.on('data', capture);
     child.once('error', error => { clearTimeout(timer); signal.removeEventListener('abort', abort); reject(error); });
     child.once('close', (code, exitSignal) => { clearTimeout(timer); signal.removeEventListener('abort', abort); resolveResult({ code, signal: exitSignal, stopped, output: redact(output) }); });

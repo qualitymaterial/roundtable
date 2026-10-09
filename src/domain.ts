@@ -22,24 +22,27 @@ export const Limits = z.object({
   exchanges: z.number().int().positive().default(100), toolCalls: z.number().int().positive().default(300),
   requests: z.number().int().positive().default(100), concurrency: z.number().int().min(1).max(16).default(3),
   queue: z.number().int().positive().default(200), timeoutMs: z.number().int().positive().default(900000),
-  turnTimeoutMs: z.number().int().positive().default(120000), tokens: z.number().positive().default(500000),
+  turnTimeoutMs: z.number().int().positive().default(120000), tokens: z.number().int().positive().nullable().default(null),
   dollars: z.number().positive().default(10),
   providerRequests: z.record(z.string(), z.number().int().positive()).default({}),
 });
 export type SessionRecord = {
+  completion?: { at: string; note: string; by: 'human' };
   hostAccess?: { readRoots: string[]; writeRoots: string[]; shell: boolean };
   id: string; objective: string; policy: 'open' | 'goal' | 'structured' | 'parallel'; constraints: string;
-  createdAt: string; state: 'active' | 'paused'; reason?: string; workspace: string;
+  createdAt: string; state: 'active' | 'paused'; reason?: string; pauseKind?: 'budget' | 'manual'; workspace: string;
   permissions: string[]; limits: z.output<typeof Limits>;
   usage: { exchanges: number; toolCalls: number; requests: number; tokens: number; dollars: number };
   providerRequests: Record<string, number>;
 };
 export type Task = { id: string; sessionId: string; title: string; state: 'open' | 'claimed' | 'done' | 'cancelled'; owner?: string; findings: string; dependencies: string[] };
 export type Artifact = { id: string; sessionId: string; name: string; content: string; hash: string; author: string; createdAt: string; provenance: string };
-export type Approval = { id: string; sessionId: string; agentId: string; capability: string; reason: string; state: 'pending' | 'approved' | 'rejected' | 'consumed'; command?: { text: string; cwd: string; fingerprint: string } };
+export type Approval = { id: string; sessionId: string; agentId: string; capability: string; reason: string; state: 'pending' | 'approved' | 'rejected' | 'consumed'; command?: { text: string; cwd: string; fingerprint: string; background?: boolean; timeoutMs?: number } };
 export type Note = { id: string; sessionId: string; author: string; text: string; kind: 'note' | 'decision'; timestamp: string };
 export type Delivery = { messageId: string; agentId: string; state: 'pending' | 'inflight' | 'acknowledged' | 'failed'; attempts: number; error?: string };
 export interface AgentAdapter {
+  compact?(): Promise<unknown>;
+  context?(): unknown;
   prompt(text: string): Promise<void>;
   abort(): Promise<void>;
   dispose(): void;

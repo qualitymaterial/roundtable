@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "name": "Reproducible data analysis",
+  "objective": "Analyze the human's authorized dataset and produce a reproducible, independently checked result.",
+  "constraints": "Wait for the human's question and dataset location. Inspect schema, missing values, units and provenance before drawing conclusions. Use permitted structured-data tools or approved execution; never invent execution results. Separate observations from causal claims. Publish assumptions, method, outputs and limitations. Have another participant check at least one important calculation against source data before marking the task done.",
+  "policy": "goal"
+}

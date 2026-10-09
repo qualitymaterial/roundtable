@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "name": "Evidence-based research",
+  "objective": "Investigate the human's question, compare credible competing explanations and publish a sourced technical brief.",
+  "constraints": "Wait for the human's specific question. Negotiate contributions without fixed roles. Use configured research or MCP services only when authorized. Cite the exact sources actually retrieved with dates and distinguish source evidence from inference. If browsing is unavailable, state that limitation. Share competing evidence, avoid duplicating retrieval, and publish a brief with claims, supporting sources, uncertainty and open questions. A peer should independently check the most consequential claims; record what was and was not verified.",
+  "policy": "goal"
+}

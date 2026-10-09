@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "name": "Verified project change",
+  "objective": "Implement the human's requested project change, preserve existing work and verify the resulting behavior.",
+  "constraints": "Wait for the human's concrete change request and authorized project folder. Read applicable project instructions. Negotiate nonoverlapping file ownership, inspect current hashes before editing and keep edits focused. Request exact command approval when execution is needed. Run checks that exercise observable behavior; do not claim mocked inference proves live model quality. Share diffs, evidence, remaining defects and reproduction steps. A peer should review the changed behavior before the human accepts completion. Do not publish, push or deploy without human authorization.",
+  "policy": "goal"
+}

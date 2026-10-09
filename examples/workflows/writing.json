@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "name": "Document production",
+  "objective": "Create and review a useful document for the human's audience and purpose.",
+  "constraints": "Wait for the human's document brief. Establish audience, purpose, factual sources and output format. Negotiate work and keep one shared task. Draft from evidence, identify unverified claims and review for accuracy and readability. Publish the final text as an artifact with provenance and a brief review record. Do not claim that a PDF or Word file was rendered or visually checked unless an authorized tool actually did so.",
+  "policy": "goal"
+}

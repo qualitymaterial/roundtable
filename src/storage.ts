@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { id, timestamp, redact, type Delivery, type Message } from './domain.js';
 
-export type EntityKind = 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note';
+export type EntityKind = 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note' | 'checkpoint' | 'job' | 'knowledge';
 export interface StorageAdapter {
   get<T>(kind: EntityKind, id: string): T | undefined;
   list<T>(kind: EntityKind, sessionId?: string): T[];

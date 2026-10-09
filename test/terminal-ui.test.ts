@@ -19,6 +19,12 @@ test('terminal renderer shows identity, access, budgets and exact approval detai
   for (const line of output.split('\n').filter(line => /^[╭│╰]/.test(line))) assert.equal(line.length, 64, line);
 });
 
+test('budget pause is a recovery panel and disabled token limits render without errors', () => {
+  let output = ''; const ui = new TerminalUI({ columns: 88, write: (text: string) => { output += text; return true; } } as WriteStream, true, false);
+  ui.paused('Token budget reached: 511,204 / 500,000', 'Use /budget tokens off, then /resume.');
+  assert.ok(output.includes('PAUSED / WORK SAVED')); assert.ok(output.includes('/budget tokens off')); assert.ok(!output.includes('ERROR'));
+});
+
 test('terminal output strips escape/control injections and keeps provider messages distinguishable', () => {
   const malicious = '\x1b[2Jhidden\x1b]0;spoof title\x07\u202ereversed\0';
   assert.equal(safeTerminalText(malicious), 'hiddenreversed');

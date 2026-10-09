@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.2.0-dev.1 — product review integration (local development)
+
+- Added guided provider/model/auth and folder-access setup; saving setup disables legacy implicit current-folder write grants.
+- Enabled independent native Pi compaction and bounded transient retries, with guarded requests, usage accounting, retained original history and cancellation.
+- Added session ownership before recovery, guarded host file claims, private checkpoints, changed-span previews and conflict-aware undo.
+- Added approved background jobs with durable bounded logs, cancellation and interrupted-state recovery.
+- Added completion/usage reports, explicit human acceptance, multiline drafts and direct addressing by name.
+- Added human-curated project memory with expiry/provenance/deletion, four non-executable workflow recipes and headless NDJSON execution.
+- Added version reporting, validated local Windows release switching and an OS CI definition. The matrix has not run remotely.
+- Local typecheck, lint, build and 52 tests pass. Windows standalone installation, release validation/refusal, demo and restart pass. Hosted tests for these changes remain unverified; advanced artifact/browser/editor features and comparative evaluations remain on the roadmap.
+
+## Unreleased — budget recovery and usability review
+
+- New sessions have no token ceiling by default; saved ceilings remain configurable with `/budget tokens <total|off>`. Other safeguards and usage records are preserved.
+- Show exact exhausted budgets, warn at 80%, and emit one pause panel with recovery instructions. Reject resume until exhausted limits are addressed; changing one limit preserves all others.
+- Let paid in-flight responses finish, acknowledge completed turns, and retain interrupted deliveries without duplicate provider-error panels. Restored paused sessions defer provider probes until explicit resume.
+- Added regression coverage through two independent Pi sessions, CLI controls, restart and terminal rendering; full check passes 43 tests. Hosted inference for this patch remains unverified.
+- Added a prioritized, source-grounded product review covering onboarding, compaction, recovery, checkpoints, permissions, background jobs, artifacts, provider reliability and evaluation.
+
 ## Windows installation and initial GitHub source publication — 2026-10-09
 
 - Added a standalone per-user Windows installer with locked runtime dependencies, startup validation, an absolute Node launcher, user PATH registration and backed-up PowerShell profile integration.
