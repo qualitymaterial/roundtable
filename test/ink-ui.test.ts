@@ -115,3 +115,26 @@ test('reference layout orders header and session above conversation, with border
     } finally { controller.close(); await next; app.unmount(); app.cleanup(); }
   }
 });
+
+
+test('polished layout keeps the green accent, shaded composer and real model footer without a dashboard', async () => {
+  const controller = new PresentationController();
+  controller.append('brand', 'Roundtable', 'C:/Project');
+  controller.update({ session: 'Review design', agents: 2, tasks: 0, state: 'active', modelSummary: 'A: fixture/one · B: fixture/two' });
+  const next = controller.lines.next(); const theme = terminalTheme({ COLORTERM: 'truecolor' });
+  const app = render(createElement(RoundtableApp, { controller, theme, inputEnabled: false }));
+  try {
+    await tick(); const frame = app.lastFrame()!;
+    assert.equal(theme.inputBackground, '#1A1D1B'); assert.equal(theme.inputForeground, '#E6E6E6'); assert.equal(theme.accent, '#39FF8B');
+    assert.equal(terminalTheme({ NO_COLOR: '1' }).inputBackground, undefined);
+    assert.match(frame, /Roundtable.*LOCAL/); assert.match(frame, /Send a message/); assert.match(frame, /A: fixture\/one/);
+    assert.match(frame, /2 agents.*0 tasks.*ready/); assert.match(frame, /\/agents.*\/help/); assert.doesNotMatch(frame, /[╭╮╯╰]/);
+    controller.update({ live: [{ id: 'a', label: 'A', model: 'fixture/one', text: '', running: 0, done: 0, failed: 0 }] }); await tick();
+    assert.match(app.lastFrame()!, /working/); controller.endTurn('a'); await tick(); assert.match(app.lastFrame()!, /ready/);
+    Object.defineProperty(app.stdout, 'columns', { configurable: true, value: 28 }); app.stdout.emit('resize'); await tick();
+    // Static scrollback was printed before resize; only the live region can be redrawn.
+    const liveFrame = app.lastFrame()!.slice(app.lastFrame()!.indexOf('Send a message'));
+    for (const line of liveFrame.split('\n')) assert.ok(stringWidth(line) <= 28, line);
+    assert.doesNotMatch(liveFrame, /fixture\/two/);
+  } finally { controller.close(); await next; app.unmount(); app.cleanup(); }
+});

@@ -9,6 +9,7 @@ export const MessageInput = z.object({
   recipients: z.array(z.string()).max(64), threadId: z.string().min(1).max(100).default('main'),
   type: z.enum(messageTypes), body: z.string().min(1).max(24000),
   attachments: z.array(z.string()).max(16).optional(),
+  expectsReply: z.boolean().optional(),
   artifacts: z.array(z.string()).max(32).default([]), correlationId: z.string().optional(), taskId: z.string().optional(),
 });
 export type MessageDraft = z.input<typeof MessageInput>;

@@ -1,8 +1,8 @@
 # Terminal interface
 
-## Ink interface (0.2.0-dev.9)
+## Ink interface (0.2.0-dev.12)
 
-The visual hierarchy follows the supplied Roundtable reference: a small monochrome identity with LOCAL at the right, a muted divider and project path, then SESSION / name and the bold objective above the conversation. The heading is written once per session or rename, rather than repeating above every input. Messages use bold participant names and quiet provider/model metadata. The composer has a single muted rounded border, a small green prompt and an empty-input hint. One footer shows agent/open-task counts, exceptional state such as paused, and `/help`. More keyboard hints appear only in dialogs or command completion. Terminal font and background remain user-controlled; the CLI does not reproduce a browser's outer rounded window or pixel typography. ASCII mode substitutes plain border characters.
+The latest reference pass uses a compact Roundtable identity and project path without a full-width divider. Color terminals get a graphite shaded composer, bone input text and restrained green prompt; NO_COLOR retains a plain outlined composer. The terminal's background and font remain authoritative outside the input surface. A quiet footer shows configured participant/model names, counts, ready/working/paused state and command hints. Narrow terminals hide the model summary. Compact startup avoids a repeated participant roster; `/agents` retains full model/provider details. Conversation entries keep participant identity and model metadata. Completed/aborted turns clear their live row. The interface remains inline with scrollback; it does not reserve a full terminal window or pin input to a fixed screen row.
 
 Interactive Windows, macOS and Linux terminals use Ink 8 / React 19.3 on Node 24. Completed messages stay in normal terminal scrollback; the live activity area and composer redraw below them. No alternate screen, sidebars or terminal background changes. Participant identity includes the configured provider/model; all state comes from the current session. Compact mode folds tool results and peer chatter into activity summaries. `/activity`, `/messages` and `/view verbose` expose details. Errors and exact approval commands remain visible.
 
@@ -96,3 +96,6 @@ Compact mode suppresses raw successful tool results, peer messages, tool-use nar
 Use `/recovery`, `/require-check`, `/sandbox`, `/change-group`, `/worktree`, `/fallback` and `/provider-recover`. Required checks and isolated execution are real controls; grouped changes preserve review/undo evidence. Offline encrypted backup is available through `roundtable runtime backup` and `restore`. See [SPRINT_1.md](SPRINT_1.md) for commands, limits, dependencies and acceptance boundaries.
 
 Dev.11 adds the bounded Markdown/code/diff renderer, inline invalid-field messages for budget/research and initial endpoint fields, readable skill/MCP/memory/stage views, /research, /skill-stage and optional next-stage selection. New browser MCP sign-in remains human-controlled and cancelable. See SPRINT_2.md for commands and supported formatting.
+
+
+Standalone greetings/thanks get one local Roundtable response. Provider compatibility checks still occur when participants connect (normally two metered requests each); local greeting handling does not remove those separate admission checks. Use `/pause` to stop existing work; a greeting does not cancel already-running tasks.

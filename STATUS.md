@@ -1,27 +1,27 @@
 # Roundtable current state
 
-Updated: 2026-10-09. Canonical owner: this repository. Accepted scope: docs/IMPLEMENTATION_CHECKLIST.md. Sprint commands/limits: docs/SPRINT_1.md and docs/SPRINT_2.md. Evidence: docs/TESTING.md and ignored artifacts/verification/.
+Updated: 2026-10-09. Canonical owner: this repository. Scope: docs/IMPLEMENTATION_CHECKLIST.md. Sprint documentation: docs/SPRINT_1.md and docs/SPRINT_2.md. Verification evidence: docs/TESTING.md and ignored artifacts/verification/.
 
 ## Current milestone
 
-Source 0.2.0-dev.11 implements the bounded Sprint 2 UX/integration work on top of Sprint 1. Node 24.19, Pi 1.1.0, Ink 8 / React 19.3. Independent contexts, execution-layer permissions, persistence and existing supported authentication are preserved. No paid hosted calls, imported credentials, telemetry or package publication were performed for these sprints. The owner authorized committing and pushing both sprints to GitHub on 2026-10-09.
+Source 0.2.0-dev.12 repairs the unsolicited collaboration observed after a human greeting and refines the Ink layout toward the latest supplied terminal reference. Both prior sprints were pushed as 826b9a4. The owner authorized committing and pushing these follow-up changes on 2026-10-09. No paid Roundtable inference, credential import, telemetry or package publication was performed.
 
 ## Operational functionality
 
-Sprint 1 provides required artifact checks, task/dependency repairs, scoped WSL/Linux project isolation, grouped change review/undo, optional Git worktrees, explicit provider recovery and encrypted full-runtime restoration.
+Standalone greetings and thanks receive one local Roundtable reply, without model calls, tools, task creation or peer traffic. Actual requests and attachments retain normal independent-agent delivery. Peer sends now default to stored notifications; task requests or explicit expectsReply requests trigger turns. Notifications remain retrievable from thread history. Durable roundtable_wait blocks fresh/cached tools and peer-triggered work until targeted human/system input. Dispatched turns with no earlier substantive human request cannot execute tools. A greeting does not resume paused work or cancel existing active work.
 
-Sprint 2 adds restrained Markdown/code/diff presentation and inline invalid-field feedback in budget, research and initial endpoint settings. Skill packages preserve supporting files/licenses and integrity manifests; explicit staging plus per-agent sandbox grants enables isolated scripts. No automatic plugin execution occurs.
+The session timeout measures a continuous burst of collaboration/background work, excluding connection and idle human-input time; resource budgets remain cumulative. All delivered, failed, cancelled and timed-out turns clear live indicators. The UI uses a compact identity, graphite shaded input with green accent, quiet model/status footer, and full details through existing commands. NO_COLOR retains outlined input; narrow terminals hide model metadata. Duplicate restore-pause notices are suppressed. Inline scrollback is preserved.
 
-Official Pi MCP OAuth now supports browser callbacks, PKCE/state, registration, refresh and logout. Credentials bind to exact endpoints; additional authorization origins require consent. Templates can be discovered, while reading still requires exact URI allowlists. Existing trusted stdio remains outside isolation.
-
-Configured SearXNG/JSON search and allowlisted page text retrieval produce cited, timestamped, hashed snapshots with session caches. SQLite FTS5 searches notes and project memory with scope/expiry checks. Workflow graphs reject missing/cyclic prerequisites and recheck required tasks/artifacts before approval. The evaluation command compares recorded solo/team sessions without inference or claims of model superiority.
+Prior capabilities remain: independent Pi contexts, multi-provider configuration, execution-layer permissions, scoped Linux/WSL isolation, change groups/worktrees, recovery/backup, MCP OAuth/templates, reviewed skill packages, configured research, FTS memory, workflow validation and recorded session comparisons.
 
 ## Verification
 
-Captured sprint2-final-check.txt records strict type checking, ESLint, production build and 137 tests passing, zero failures/skips, with real sandbox tests enabled. The new local HTTP fixture exercises Pi OAuth end to end, refresh and resource templates. Research/cache/revocation, FTS, package integrity, inline input, prerequisite and comparison regressions pass. Real WSL execution of a staged skill script passes. Existing three-agent, recovery, backup and installation regression tests remain included. Initial shebang/SetupIO compilation issues and the stale recipe-count assertion were repaired before the gate.
+Final conversation-final-check.txt: strict TypeScript, ESLint, build and 146 tests passed, zero failures/skips, including real sandbox tests. New tests cover three independent Pi sessions with zero inference/tool effects for hello, notification routing, durable waits, cached-tool denial, timeout/cancellation and UI modes. Existing collaboration, compaction, persistence and installation tests pass. A JSON-field-order fixture and static-scrollback resize assertion were repaired before the final gate.
 
-Installed release 20261009-165542-3331dedf passed locked installation, fresh PowerShell resolution and all 168 compiled-file hash comparisons. Real Windows PTY verified the research picker, invalid-field retention/cancel, readable skills and clean exit. The installed three-agent deterministic demo returned 0 with all collaboration checks passing. Existing user sessions retain their loaded release until explicitly closed; private runtime data is untouched by acceptance fixtures.
+Windows acceptance on a disposable installed session confirmed a single greeting response and zero requests/tools/tasks/artifacts in SQLite, plus resume and clean terminal exit. Installation details and final compiled-file checks are recorded with the acceptance evidence. Real user sessions and private runtime state remain untouched.
 
-## Remaining boundaries and next milestone
+## Boundaries and next executable task
 
-Markdown is a subset; page inspection does not render JavaScript; only one workflow stage is active; executable packages use the bounded Linux sandbox. Arbitrary native-plugin isolation, full legacy-dialog conversion, rendered browser automation, hosted OAuth diversity and fresh-user/cross-OS acceptance remain open. No real matched hosted-quality study was run. The next highest-value milestone is a user-accepted end-to-end task with configured real providers and integrations, followed by matched solo/team evaluation under equal budgets.
+Courtesy matching is intentionally narrow English matching, not general semantic intent detection. Model adherence still determines scope after an actual request; explicit wake requests remain subject to budgets. Live provider admission still uses metered probes. Hosted behavioral validation, broader cross-platform acceptance, native-plugin isolation and rendered browser automation remain unverified or incomplete. Input stays inline rather than pinned to a full-screen viewport.
+
+Next: user acceptance with configured real providers: hello should yield one local reply with no agent work; a concrete task should still complete with evidence; idle/wait and cancellation should remain quiet. Only run paid comparisons when explicitly requested.

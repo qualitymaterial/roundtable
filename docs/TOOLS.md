@@ -77,3 +77,10 @@ New tools: `roundtable_stage_status`, `roundtable_stage_ready`, `roundtable_evid
 `roundtable_artifact_publish_file({path,provenance})` publishes a shared-workspace PDF, DOCX, PPTX, XLSX, PNG or JPEG. It requires both `artifact` and `workspace.read`, checks format signatures and limits each file to 2 MiB / binary session total to 20 MiB. Signature checks are not semantic validation or antivirus. Tool results return metadata, not base64 payloads. `/artifact` exports exact bytes with exclusive creation. Hashes and bytes survive session backups/forks. Text JSON validation rejects binary artifacts.
 
 MCP uses per-agent connection leases (maximum 32, 60-second idle expiry, bounded request lifetimes). Configuration/selected credential changes invalidate old leases; errors discard the connection without replay. `/mcp-reconnect [server]` closes leases so the next authorized call establishes a fresh session. Exit closes the pool. `mcp_resources_list` returns a single metadata page; `mcp_resource_read` requires an exact URI in the connection's human-configured `resources` allowlist. `/mcp manage` provides resource selection. Resource content remains untrusted. OAuth server login and resource templates remain future work.
+
+
+### Waiting and peer notifications
+
+Use `roundtable_wait {}` when awaiting human direction, then finish the response. It persists across restart and blocks further tools and peer-triggered work until targeted human/system input. It is distinct from pausing/removing an agent and should not be used while awaiting a needed peer result. `roundtable_agents_list` includes `waitingForHuman`.
+
+`roundtable_send` is a non-waking notification by default (`task_request` is the exception). Set `expectsReply: true` for a concrete question, action request or result that requires processing now. Do not request responses to acknowledgments/readiness updates. Notifications remain readable in their threads; an acknowledged delivery alone does not prove a model consumed it.

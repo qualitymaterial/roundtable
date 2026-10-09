@@ -62,6 +62,8 @@ export class ToolRegistry implements ToolExecutor {
     const cacheId = `${agent.sessionId}:${agent.id}:${callId}`;
     const tool = this.entries.get(name);
     const fingerprint = this.fingerprint(name, args);
+    const blocked = this.engine.toolBlockReason(agent.id);
+    if (blocked && name !== 'roundtable_wait') return { ok: false, data: blocked };
     const cached = this.engine.repo.cached(cacheId) as { fingerprint: string; result: unknown } | undefined;
     if (cached && tool && this.engine.authorized(agent, tool.permission)) {
       if (cached.fingerprint !== fingerprint) return { ok: false, data: 'Tool call ID collision' };
@@ -140,8 +142,9 @@ export function installTools(registry: ToolRegistry): void {
   };
   registry.register('roundtable_stage_ready', 'Declare your stage work finished after publishing required findings. Wait for human stage approval.', empty, 'collaborate', (_args, { agent }) => stageReady(engine, agent.id));
   registry.register('roundtable_stage_status', 'Inspect workflow stage and readiness barrier.', empty, 'collaborate', () => stageStatus(engine) ?? { mode: 'free collaboration' });
-  registry.register('roundtable_agents_list', 'Discover session agents, models and permission scopes.', empty, 'collaborate', () => engine.agents());
-  registry.register('roundtable_send', 'Queue a message; returns immediately without waiting for a reply. Use * for all other active agents.', Type.Object({ recipients: Type.Array(text(100), { minItems: 1, maxItems: 64 }), body: text(24000), type: Type.Optional(Type.Union(messageTypes.filter(t => !['human', 'system'].includes(t)).map(t => Type.Literal(t)))), threadId: Type.Optional(text(100)), correlationId: Type.Optional(text(100)), taskId: Type.Optional(text(100)), artifacts: Type.Optional(Type.Array(text(100), { maxItems: 32 })) }), 'collaborate', (args, { agent }) => engine.send({ ...args, type: args.type ?? 'direct', sender: agent.id, sessionId: engine.sessionId }));
+  registry.register('roundtable_wait', 'Enter a durable waiting-for-human state. Stops peer-triggered work and further tool calls until a human message or system approval/result arrives. Finish your response after calling; do not use while awaiting a needed peer result.', empty, 'collaborate', (_args, { agent }) => { engine.waitForHuman(agent.id); return { waiting: true }; });
+  registry.register('roundtable_agents_list', 'Discover session agents, models and permission scopes.', empty, 'collaborate', () => engine.agents().map(a => ({ ...a, waitingForHuman: engine.waiting(a.id) })));
+  registry.register('roundtable_send', 'Store a peer notification without waking models by default. Set expectsReply:true only for a concrete question, delegated action or result that needs processing; task_request also wakes by default. Never request replies to thanks, acknowledgments or readiness updates. Use * for all other active agents.', Type.Object({ recipients: Type.Array(text(100), { minItems: 1, maxItems: 64 }), body: text(24000), expectsReply: Type.Optional(Type.Boolean()), type: Type.Optional(Type.Union(messageTypes.filter(t => !['human', 'system'].includes(t)).map(t => Type.Literal(t)))), threadId: Type.Optional(text(100)), correlationId: Type.Optional(text(100)), taskId: Type.Optional(text(100)), artifacts: Type.Optional(Type.Array(text(100), { maxItems: 32 })) }), 'collaborate', (args, { agent }) => engine.send({ ...args, type: args.type ?? 'direct', sender: agent.id, sessionId: engine.sessionId }));
   registry.register('roundtable_threads_list', 'List discussion threads with message counts.', empty, 'collaborate', () => {
     const counts = new Map<string, number>(); for (const m of engine.repo.messages(engine.sessionId, undefined, 10000)) counts.set(m.threadId, (counts.get(m.threadId) ?? 0) + 1);
     return [...counts].map(([threadId, count]) => ({ threadId, count }));

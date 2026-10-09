@@ -59,4 +59,4 @@ export function advanceStage(engine: Engine, nextName?: string): void {
   engine.repo.put('session', session); engine.repo.event(engine.sessionId, 'human_stage_approved', { index: previous, name: status.current.name });
   if (state.stages[state.index]) for (const agent of engine.agents().filter(a => a.state !== 'removed')) engine.notify(agent.id, `stage:${state.index}`, `Stage approved. Begin ${state.stages[state.index]!.name}: ${state.stages[state.index]!.objective}`);
 }
-export const blindAllowedTools = new Set(['roundtable_agents_list', 'roundtable_artifact_publish', 'roundtable_stage_ready', 'roundtable_stage_status', 'roundtable_tools_list', 'roundtable_tool_request', 'data_json_validate', 'roundtable_memory_write']);
+export const blindAllowedTools = new Set(['roundtable_wait', 'roundtable_agents_list', 'roundtable_artifact_publish', 'roundtable_stage_ready', 'roundtable_stage_status', 'roundtable_tools_list', 'roundtable_tool_request', 'data_json_validate', 'roundtable_memory_write']);

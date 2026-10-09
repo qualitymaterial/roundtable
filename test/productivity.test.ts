@@ -134,7 +134,9 @@ test('Pi compaction is metered, independent, durable and preserves history on fa
     const adapter = await PiAdapter.create(registry, a, e, (model, context) => {
       const user = context.messages.findLast(m => m.role === 'user');
       const text = user?.role === 'user' ? (typeof user.content === 'string' ? user.content : user.content.filter(c => c.type === 'text').map(c => c.text).join('')) : '';
-      const summary = !text.startsWith('{"objective":'); if (summary) summaryCalls++;
+      let summary = true;
+      try { const payload = JSON.parse(text) as { objective?: unknown; incoming?: unknown }; summary = !(typeof payload.objective === 'string' && payload.incoming); } catch { /* Pi compaction is plain text. */ }
+      if (summary) summaryCalls++;
       const output = createAssistantMessageEventStream();
       queueMicrotask(() => {
         const message: AssistantMessage = { role: 'assistant', api: model.api, model: model.id, provider: model.provider, timestamp: Date.now(), content: [{ type: 'text', text: summary ? '## Goal\nRetain the objective.\n## Open work\nContinue independent evidence review.' : `Evidence ${model.id}. ` + 'bounded evidence '.repeat(1100) }], stopReason: summary && fail ? 'error' : 'stop', ...(summary && fail ? { errorMessage: 'Fixture summary failure' } : {}), usage: { input: 10, output: 10, totalTokens: 20, cacheRead: 0, cacheWrite: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } } };

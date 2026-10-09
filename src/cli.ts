@@ -73,6 +73,7 @@ function transcript(engine?: Engine, repo?: Repository): (activity: unknown) => 
       return;
     }
     const label = agent ? `${agent.name} [${agent.provider}/${agent.model}]` : (a.agentId ?? a.message?.sender ?? 'system');
+    if (a.type === 'turn_end') { ui.endTurn(label); return; }
     if (a.type === 'stream') { ui.stream(label, a.delta ?? ''); return; }
     if (a.type === 'paused') { ui.paused(a.text ?? 'Paused', budgetHelp); return; }
     if (a.type === 'message') {

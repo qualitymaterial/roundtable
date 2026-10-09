@@ -226,3 +226,14 @@ Two compilation errors were repaired early: an import initially preceded the CLI
 Installed acceptance and SHA-256 readback are recorded in `artifacts/verification/sprint2-installed-checks.md` after the installer completes. Live third-party accounts, fresh-user studies, cross-OS operation, rendered browser automation and real matched model-quality studies remain unverified.
 
 Final installed release `20261009-165542-3331dedf` passed locked dependency installation and doctor. Fresh PowerShell returned dev.11; all 168 compiled files matched the verified build. Real Windows PTY verified /research settings, invalid-field retention, Escape cancellation, readable /skills list and clean /exit. The installed deterministic demo returned 0 with three independent Pi sessions, three tool users, three acknowledged peer messages, a shared task and a validated artifact. Evidence: sprint2-install.txt, sprint2-installed-hashes.json, sprint2-installed-checks.md and sprint2-installed-demo.txt.
+
+
+## Greeting control and reference UI pass (2026-10-09, dev.12)
+
+Final gate: 146 tests passed, zero failures/skips with real sandbox tests enabled; strict type checking, lint and production build passed. Captured output: artifacts/verification/conversation-final-check.txt.
+
+Eight new behavior regressions cover narrow courtesy matching; zero model calls/tools/tasks/artifacts across three independent Pi sessions for hello; peer notifications versus explicit requests; waiting persistence and cached-tool denial; missing-human-request tool gate; active versus idle timeout; failure/timeout live cleanup; and courtesy during streaming/steering. Renderer coverage checks the graphite composer, model footer, ready/working transitions, narrow live layout and NO_COLOR fallback. Existing collaboration tests use explicit actionable peer requests.
+
+First full run found one stale fixture that recognized ordinary prompts by JSON field order; structural detection repaired it without weakening compaction assertions. The first new resize assertion incorrectly measured previously printed Static scrollback as live content; it now checks the mutable region. Early implementation type errors were resolved before the full gate. These local deterministic tests are not a hosted model-behavior study.
+
+Windows acceptance evidence: conversation-installed-greeting.json and conversation-install.txt under artifacts/verification. A disposable three-participant session received one human hello and one Roundtable response; SQLite confirmed zero requests, tool events, tasks and artifacts. Installed CLI restoration, resume, clean exit and global command resolution were checked separately. Live compatibility admission remains metered. Existing user sessions, credentials and preferences were not used by these fixtures.

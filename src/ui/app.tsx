@@ -19,10 +19,9 @@ export function composerWindow(c: Composer, columns: number) {
 
 const asciiBorder = { topLeft: '+', top: '-', topRight: '+', left: '|', bottomLeft: '+', bottom: '-', bottomRight: '+', right: '|' };
 
-export function MessageEntry({ entry, theme, width = 80 }: { entry: Entry; theme: Theme; width?: number }) {
+export function MessageEntry({ entry, theme }: { entry: Entry; theme: Theme; width?: number }) {
   if (entry.kind === 'brand') return <Box flexDirection="column" marginTop={1} marginBottom={1}>
-    <Box justifyContent="space-between"><Text bold>{theme.ascii ? 'o' : '◔'} {entry.title}</Text><Text dimColor={theme.color}>LOCAL</Text></Box>
-    <Box marginTop={1}><Text color={theme.border}>{(theme.ascii ? '-' : '─').repeat(width)}</Text></Box>
+    <Box justifyContent="space-between"><Text bold><Text color={theme.accent}>{theme.ascii ? '>' : '›'}</Text> {entry.title}</Text><Text dimColor={theme.color}>LOCAL</Text></Box>
     <Text dimColor={theme.color} wrap="truncate-middle">{entry.body}</Text>
   </Box>;
   if (entry.kind === 'session') return <Box flexDirection="column" marginBottom={1}>
@@ -36,14 +35,19 @@ export function MessageEntry({ entry, theme, width = 80 }: { entry: Entry; theme
   </Box>;
 }
 export function StatusLine({ state, theme }: { state: Presentation; theme: Theme }) {
-  const stateLabel = state.state === 'active' ? '' : ` · ${state.state}`;
-  return <Box justifyContent="space-between" marginTop={1} columnGap={1}>
-    <Box flexShrink={1}><Text><Text color={state.state === 'active' ? theme.accent : theme.warning}>{theme.ascii ? '*' : '◉'}</Text><Text dimColor={theme.color}>{decoration(` ${state.agents} agents · ${state.tasks} tasks${stateLabel}`, theme)}</Text></Text></Box>
-    <Text dimColor={theme.color}>/help</Text>
+  const { columns } = useWindowSize();
+  const stateLabel = state.state === 'active' ? state.live.length ? 'working' : 'ready' : state.state;
+  return <Box flexDirection="column" marginTop={1}>
+    {state.modelSummary && columns >= 45 && <Text dimColor={theme.color} wrap="truncate-end">{decoration(state.modelSummary, theme)}</Text>}
+    <Box justifyContent="space-between" columnGap={1}>
+      <Box flexShrink={1}><Text><Text color={state.state === 'active' ? theme.accent : theme.warning}>{theme.ascii ? '*' : '◉'}</Text><Text dimColor={theme.color}>{decoration(` ${state.agents} agents · ${state.tasks} tasks · ${stateLabel}`, theme)}</Text></Text></Box>
+      <Text dimColor={theme.color}>{columns >= 65 ? '/agents  /help' : '/help'}</Text>
+    </Box>
   </Box>;
 }
 export function PromptComposer({ composer: c, theme, columns }: { composer: Composer; theme: Theme; columns: number }) {
-  const contentWidth = Math.max(4, columns - 6);
+  const shaded = theme.color && Boolean(theme.inputBackground);
+  const contentWidth = Math.max(4, columns - (shaded ? 4 : 6));
   const window = composerWindow(c, contentWidth); const ref = useRef<DOMElement>(null); const { setCursorPosition } = useCursor();
   const [origin, setOrigin] = useState({ x: 0, y: 0 });
   setCursorPosition({ x: origin.x + window.x, y: origin.y + window.y });
@@ -52,9 +56,9 @@ export function PromptComposer({ composer: c, theme, columns }: { composer: Comp
   const choiceStart = Math.max(0, c.selected - 3);
   return <Box flexDirection="column" marginTop={1}>
     {c.mode !== 'chat' && <Text bold>{c.label}</Text>}
-    <Box borderStyle={theme.ascii ? asciiBorder : 'round'} borderColor={theme.border} paddingX={1} width={columns}>
+    <Box borderStyle={shaded ? undefined : theme.ascii ? asciiBorder : 'round'} borderColor={theme.border} backgroundColor={theme.inputBackground} paddingX={1} paddingY={shaded ? 1 : 0} width={columns}>
       <Text color={theme.accent}>{theme.ascii ? '> ' : '› '}</Text>
-      <Box ref={ref} width={contentWidth}><Text wrap={c.text ? 'wrap' : 'truncate-end'} dimColor={theme.color && !c.text}>{c.text ? window.text : c.mode === 'chat' ? decoration('Send a message to the agents…', theme) : c.mode === 'pick' ? decoration('Search…', theme) : ' '}</Text></Box>
+      <Box ref={ref} width={contentWidth}><Text color={theme.inputForeground} wrap={c.text ? 'wrap' : 'truncate-end'} dimColor={theme.color && !c.text}>{c.text ? window.text : c.mode === 'chat' ? decoration('Send a message to the agents…', theme) : c.mode === 'pick' ? decoration('Search…', theme) : ' '}</Text></Box>
     </Box>
     {c.mode === 'pick' && <Box flexDirection="column" marginTop={1}>
       {c.choices.slice(choiceStart, choiceStart + 6).map((choice, i) => <Text key={choice.index} color={choiceStart + i === c.selected ? theme.accent : undefined} wrap="truncate-end">{choiceStart + i === c.selected ? '> ' : '  '}{choice.label}</Text>)}

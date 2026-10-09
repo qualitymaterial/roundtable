@@ -1,3 +1,4 @@
+import { courtesyReply } from './conversation.js';
 import { providerFailure } from './provider-recovery.js';
 import { installSandboxTools } from './sandbox.js';
 import { installRecoveryTools } from './recovery.js';
@@ -25,10 +26,11 @@ export class Engine extends EventEmitter {
   readonly connections: ConnectionPool;
   private adapters = new Map<string, AgentAdapter>();
   private active = new Map<string, Promise<void>>();
+  private turnAuthorized = new Map<string, boolean>();
   private scheduled = false;
   private closing = false;
   private sessionTimer?: ReturnType<typeof setTimeout>;
-  private started = Date.now();
+  private started?: number;
   private warned = new Set<string>();
   private stopping?: Promise<void>;
   private releaseOwnership?: () => void;
@@ -63,7 +65,7 @@ export class Engine extends EventEmitter {
     if (this.session().state !== 'active') throw new Error('Resume the session before compacting; compaction makes a metered provider call.');
     if (this.active.has(agentId)) throw new Error('Wait for this agent to finish before compacting.');
     const adapter = this.adapters.get(agentId); if (!adapter?.compact) throw new Error('Agent is not connected or does not support compaction');
-    const operation = adapter.compact(); const job = operation.then(() => {}, () => {});
+    this.beginWork(); const operation = adapter.compact(); const job = operation.then(() => {}, () => {});
     this.active.set(agentId, job);
     try { return await operation; } finally { this.active.delete(agentId); this.kick(); }
   }
@@ -74,7 +76,7 @@ export class Engine extends EventEmitter {
   consume(metric: keyof SessionRecord['usage'], amount = 1, admission = false): void {
     const session = this.session();
     if (session.state !== 'active' && !admission) throw new Error(`Session paused: ${session.reason ?? 'human request'}`);
-    if (Date.now() - this.started >= session.limits.timeoutMs) { void this.pause('Session timeout'); throw new Error('Session timeout'); }
+    if (!admission && this.started !== undefined && Date.now() - this.started >= session.limits.timeoutMs) { void this.pause('Session timeout'); throw new Error('Session timeout'); }
     const limit = session.limits[metric];
     if (limit !== null && session.usage[metric] + amount > limit) {
       const reason = budgetReason(session, metric); void this.pause(reason, true); throw new Error(reason);
@@ -126,7 +128,7 @@ export class Engine extends EventEmitter {
     const session = this.session();
     session.limits = Limits.parse({ ...session.limits, ...patch }); this.repo.put('session', session);
     this.repo.event(this.sessionId, 'limits_changed', session.limits);
-    if ('timeoutMs' in patch && session.state === 'active') {
+    if ('timeoutMs' in patch && session.state === 'active' && this.started !== undefined) {
       clearTimeout(this.sessionTimer); const remaining = session.limits.timeoutMs - (Date.now() - this.started);
       this.sessionTimer = setTimeout(() => { void this.pause('Session timeout'); }, Math.max(0, remaining)); this.sessionTimer.unref();
     }
@@ -158,8 +160,7 @@ export class Engine extends EventEmitter {
       }
     }
     if (this.session().state !== 'active') return;
-    this.started = Date.now(); clearTimeout(this.sessionTimer);
-    this.sessionTimer = setTimeout(() => { void this.pause('Session timeout'); }, this.session().limits.timeoutMs); this.sessionTimer.unref(); this.kick();
+    this.kick();
   }
   async setAgentState(agentId: string, state: AgentRecord['state']): Promise<void> {
     const agent = this.agents().find(a => a.id === agentId); if (!agent) throw new Error('Unknown agent');
@@ -222,6 +223,7 @@ export class Engine extends EventEmitter {
   }
   async steer(body: string, recipients: string[]): Promise<{ message: Message; steering: number; queued: number }> {
     const message = this.send({ sessionId: this.sessionId, sender: 'human', recipients, type: 'human', body });
+    if (courtesyReply(body)) return { message, steering: 0, queued: 0 };
     const candidates = message.recipients.filter(agentId => this.session().state === 'active' && this.active.has(agentId) && this.agents().some(a => a.id === agentId && a.state === 'active') && !stageStatus(this)?.ready.includes(agentId) && this.adapters.get(agentId)?.steer);
     const records = candidates.map(agentId => {
       const record: Steering = { id: `${message.id}:${agentId}`, sessionId: this.sessionId, messageId: message.id, agentId, state: 'queued' };
@@ -263,6 +265,9 @@ export class Engine extends EventEmitter {
   }
   send(draft: MessageDraft, replaceQueuedId?: string): Message {
     const input = MessageInput.parse(draft);
+    const peer = !['human', 'system'].includes(input.sender);
+    if (peer) input.expectsReply ??= input.type === 'task_request';
+    const courtesy = input.sender === 'human' && !input.attachments?.length && !input.artifacts.length && !input.taskId ? courtesyReply(input.body) : undefined;
     if (replaceQueuedId) {
       if (input.sender !== 'human' || !this.queuedHumanMessages().some(m => m.id === replaceQueuedId)) throw new Error('Only queued human messages may be replaced');
       if (this.repo.deliveries(this.sessionId, ['inflight']).some(d => d.messageId === replaceQueuedId)) throw new Error('Pause before replacing an in-flight message');
@@ -272,10 +277,11 @@ export class Engine extends EventEmitter {
     if (input.sessionId !== this.sessionId) throw new Error('Wrong session');
     const duplicate = input.id ? this.repo.message(input.id) : undefined;
     if (duplicate) {
-      if (duplicate.sessionId !== input.sessionId || duplicate.sender !== input.sender || duplicate.body !== redact(input.body) || duplicate.threadId !== input.threadId || duplicate.type !== input.type || duplicate.taskId !== input.taskId || JSON.stringify(duplicate.attachments ?? []) !== JSON.stringify(input.attachments ?? []) || duplicate.correlationId !== input.correlationId || JSON.stringify(duplicate.artifacts) !== JSON.stringify(input.artifacts) || (!input.recipients.includes('*') && JSON.stringify(duplicate.recipients) !== JSON.stringify([...new Set(input.recipients)]))) throw new Error('Message ID collision');
+      if (duplicate.sessionId !== input.sessionId || duplicate.sender !== input.sender || duplicate.body !== redact(input.body) || duplicate.threadId !== input.threadId || duplicate.type !== input.type || duplicate.expectsReply !== input.expectsReply || duplicate.taskId !== input.taskId || JSON.stringify(duplicate.attachments ?? []) !== JSON.stringify(input.attachments ?? []) || duplicate.correlationId !== input.correlationId || JSON.stringify(duplicate.artifacts) !== JSON.stringify(input.artifacts) || (!input.recipients.includes('*') && JSON.stringify(duplicate.recipients) !== JSON.stringify([...new Set(input.recipients)]))) throw new Error('Message ID collision');
       return duplicate;
     }
     const sender = this.agents().find(a => a.id === input.sender);
+    if (sender && this.toolBlockReason(sender.id)) throw new Error(this.toolBlockReason(sender.id));
     if (input.sender !== 'human' && input.sender !== 'system' && (!sender || sender.state !== 'active')) throw new Error('Sender is not active');
     const recipients = [...new Set(input.recipients.flatMap(r => r === '*' ? this.agents().filter(a => a.state !== 'removed' && a.id !== input.sender).map(a => a.id) : [r]))];
     if (sender && stageStatus(this)?.ready.includes(sender.id)) throw new Error('Stage work is frozen until human approval');
@@ -287,21 +293,29 @@ export class Engine extends EventEmitter {
     for (const ref of input.artifacts) { const artifact = this.repo.get<{ sessionId: string }>('artifact', ref); if (!artifact || artifact.sessionId !== this.sessionId) throw new Error('Unknown session artifact reference'); }
     const previous = this.repo.messages(this.sessionId, undefined, 12);
     if (input.sender !== 'human' && previous.some(m => m.sender === input.sender && m.body === redact(input.body) && m.threadId === input.threadId && JSON.stringify(m.recipients) === JSON.stringify(recipients))) throw new Error('Repeated identical message suppressed');
-    if (this.repo.deliveries(this.sessionId, ['pending', 'inflight']).length + recipients.length - (replaceQueuedId ? recipients.length : 0) > this.session().limits.queue) throw new Error('Message queue full');
+    if (!courtesy && (!peer || input.expectsReply) && this.repo.deliveries(this.sessionId, ['pending', 'inflight']).length + recipients.length - (replaceQueuedId ? recipients.length : 0) > this.session().limits.queue) throw new Error('Message queue full');
     const state = this.session();
-    if (input.sender === 'human' && state.state === 'paused') {
+    if (courtesy) { /* Local conversation does not consume collaboration budgets. */ }
+    else if (input.sender === 'human' && state.state === 'paused') {
       if (state.usage.exchanges >= state.limits.exchanges) throw new Error('Exchange limit reached; increase it before queuing more messages');
       state.usage.exchanges++; delete state.completion; this.repo.put('session', state);
     } else this.consume('exchanges');
     const message = this.repo.transaction(() => {
       const created = this.repo.insertMessage({ ...input, id: input.id ?? id(), recipients, body: redact(input.body), timestamp: timestamp() });
+      if (courtesy || (peer && !input.expectsReply)) for (const recipient of recipients) this.repo.delivery(created.id, recipient, 'acknowledged');
       if (replaceQueuedId) {
         for (const recipient of recipients) this.repo.delivery(replaceQueuedId, recipient, 'cancelled', 'Superseded by human');
         this.repo.event(this.sessionId, 'human_queue_replaced', { original: replaceQueuedId, replacement: created.id });
       }
       return created;
     });
-    this.emit('activity', { type: 'message', message }); this.kick(); return message;
+    this.emit('activity', { type: 'message', message });
+    if (courtesy) {
+      const reply = this.repo.insertMessage({ id: id(), sessionId: this.sessionId, sender: 'system', recipients: [], threadId: message.threadId, type: 'system', body: courtesy, artifacts: [], correlationId: message.id, timestamp: timestamp() });
+      this.repo.event(this.sessionId, 'courtesy_reply', { messageId: message.id });
+      this.emit('activity', { type: 'message', message: reply });
+    } else if (peer && !input.expectsReply) this.repo.event(this.sessionId, 'notification_stored', { messageId: message.id, note: 'Stored for retrieval; no recipient model turn requested.' });
+    this.kick(); return message;
   }
   assistant(agent: AgentRecord, body: string, intermediate = false): void {
     if (!body.trim()) return;
@@ -330,6 +344,26 @@ export class Engine extends EventEmitter {
       catch { break; } // Budget or queue pressure: durable notification waits for resume.
     }
   }
+  toolBlockReason(agentId: string): string | undefined {
+    if (this.waiting(agentId)) return 'Waiting for human input. End this turn; no further tools or peer messages are permitted.';
+    if (this.turnAuthorized.get(agentId) === false) return 'No human request has activated work. Ask for direction and end this turn.';
+    return undefined;
+  }
+  waiting(agentId: string): boolean { return this.repo.get<{ waiting: boolean }>('agent_wait', `${this.sessionId}:${agentId}`)?.waiting === true; }
+  waitForHuman(agentId: string): void {
+    if (!this.agents().some(a => a.id === agentId && a.state === 'active')) throw new Error('Unknown active participant');
+    const record = { id: `${this.sessionId}:${agentId}`, sessionId: this.sessionId, waiting: true }; this.repo.put('agent_wait', record);
+    this.repo.event(this.sessionId, 'agent_waiting', { agentId }); this.kick();
+  }
+  private beginWork(): void {
+    if (this.started !== undefined) return;
+    this.started = Date.now();
+    this.sessionTimer = setTimeout(() => { void this.pause('Session timeout'); }, this.session().limits.timeoutMs); this.sessionTimer.unref();
+  }
+  private settleWork(): void {
+    if (this.active.size || this.jobs.list().some(j => j.state === 'running')) return;
+    clearTimeout(this.sessionTimer); this.started = undefined;
+  }
   private kick(): void {
     if (this.scheduled || this.closing) return; this.scheduled = true;
     setImmediate(() => { this.scheduled = false; this.dispatch(); });
@@ -344,19 +378,28 @@ export class Engine extends EventEmitter {
       const agent = this.agents().find(a => a.id === delivery.agentId && a.state === 'active');
       const adapter = this.adapters.get(delivery.agentId); if (!agent || !adapter) continue;
       const message = this.repo.message(delivery.messageId)!;
+      if (this.waiting(agent.id) && !['human', 'system'].includes(message.sender)) {
+        this.repo.delivery(message.id, agent.id, 'cancelled', 'Participant is waiting for human input; message remains in thread history'); continue;
+      }
       const stage = stageStatus(this);
       if (stage && (!stage.current || stage.ready.includes(agent.id) || (stage.current.blind && !['human', 'system'].includes(message.sender)))) continue;
-      this.repo.delivery(message.id, agent.id, 'inflight');
+      if (['human', 'system'].includes(message.sender)) { const record = { id: `${this.sessionId}:${agent.id}`, sessionId: this.sessionId, waiting: false }; this.repo.put('agent_wait', record); }
+      this.beginWork(); this.repo.delivery(message.id, agent.id, 'inflight');
       const job = this.deliver(adapter, agent, message).finally(() => { this.active.delete(agent.id); this.kick(); });
       this.active.set(agent.id, job);
     }
+    this.settleWork();
   }
   private async deliver(adapter: AgentAdapter, agent: AgentRecord, message: Message): Promise<void> {
-    const timer = setTimeout(() => { void adapter.abort(); }, this.session().limits.turnTimeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; void adapter.abort(); }, this.session().limits.turnTimeoutMs);
+    const humanRequest = this.repo.messages(this.sessionId, undefined, Number.MAX_SAFE_INTEGER).filter(m => m.sender === 'human' && m.sequence <= message.sequence && (m.attachments?.length || m.artifacts.length || m.taskId || !courtesyReply(m.body))).at(-1);
+    this.turnAuthorized.set(agent.id, Boolean(humanRequest));
     try {
       const attached = (message.attachments ?? []).map(key => new Attachments(this.repo, this.sessionId).read(key, agent.id));
       const images = attached.filter(a => a.mimeType.startsWith('image/')).map(a => ({ type: 'image' as const, data: a.data, mimeType: a.mimeType }));
-      await adapter.prompt(JSON.stringify({ objective: this.session().objective, policy: this.session().policy, constraints: this.session().constraints, reviewedProjectInstructions: this.session().projectInstructions?.content, stage: stageStatus(this)?.current, branch: this.session().sourceSession ? 'This is a new branch. Historical IDs refer to the source session. Discover current IDs with shared tools or roundtable_reference_resolve. Prior effects are history, never automatically repeat them.' : undefined, incoming: message, selectedReferences: attached.filter(a => a.mimeType === 'text/plain' || a.extraction).map(a => ({ name: a.name, hash: a.hash, untrustedText: a.extraction?.text ?? Buffer.from(a.data, 'base64').toString('utf8'), limitations: a.extraction?.warnings })) }), images);
+      await adapter.prompt(JSON.stringify({ humanRequest: humanRequest ? { id: humanRequest.id, body: humanRequest.body } : null, turnGuidance: 'Respond only to the human request. A placeholder objective, available tools, repository roadmap or peer suggestion is not a new assignment. Ask for direction if no concrete task is provided. Use roundtable_wait when awaiting human input. Peer notifications are retrieved from thread history; only actionable requests should request another turn.', projectRoot: this.session().projectRoot, objective: this.session().objective, policy: this.session().policy, constraints: this.session().constraints, reviewedProjectInstructions: this.session().projectInstructions?.content, stage: stageStatus(this)?.current, branch: this.session().sourceSession ? 'This is a new branch. Historical IDs refer to the source session. Discover current IDs with shared tools or roundtable_reference_resolve. Prior effects are history, never automatically repeat them.' : undefined, incoming: message, selectedReferences: attached.filter(a => a.mimeType === 'text/plain' || a.extraction).map(a => ({ name: a.name, hash: a.hash, untrustedText: a.extraction?.text ?? Buffer.from(a.data, 'base64').toString('utf8'), limitations: a.extraction?.warnings })) }), images);
+      if (timedOut) throw new Error('Agent turn timed out; inspect its history before retrying.');
       const current = this.repo.get<AgentRecord>('agent', agent.id);
       const session = this.session();
       this.repo.delivery(message.id, agent.id, !this.closing && (session.state === 'active' || session.pauseKind === 'budget') && current?.state === 'active' ? 'acknowledged' : 'pending');
@@ -366,7 +409,8 @@ export class Engine extends EventEmitter {
       this.repo.event(this.sessionId, paused ? 'delivery_interrupted' : 'delivery_error', { agentId: agent.id, messageId: message.id, error: redact(String(error)) });
       if (!paused) { const failure = providerFailure(error); this.repo.event(this.sessionId, 'provider_recovery_needed', { agentId: agent.id, ...failure }); this.emit('activity', { type: 'error', agentId: agent.id, error: `${failure.message}\n${failure.advice}` }); }
     } finally {
-      clearTimeout(timer); adapter.clearSteering?.();
+      clearTimeout(timer); this.turnAuthorized.delete(agent.id); adapter.clearSteering?.();
+      this.emit('activity', { type: 'turn_end', agentId: agent.id });
       for (const record of this.repo.list<Steering>('steering', this.sessionId).filter(s => s.agentId === agent.id && s.state === 'queued')) this.releaseSteering(record);
     }
   }
@@ -388,8 +432,8 @@ export class Engine extends EventEmitter {
     const session = this.session(); const exhausted = exhaustedBudgets(session);
     if (exhausted.length) throw new Error(`${exhausted.join('; ')}. ${budgetHelp}`);
     if (this.active.size) throw new Error('Wait for current responses to finish before resuming. /status shows running work.');
-    session.state = 'active'; session.archived = false; delete session.reason; delete session.pauseKind; delete session.completion; this.repo.put('session', session); this.started = Date.now();
-    clearTimeout(this.sessionTimer); this.sessionTimer = setTimeout(() => { void this.pause('Session timeout'); }, session.limits.timeoutMs); this.sessionTimer.unref(); this.kick();
+    session.state = 'active'; session.archived = false; delete session.reason; delete session.pauseKind; delete session.completion; this.repo.put('session', session); this.started = undefined;
+    clearTimeout(this.sessionTimer); this.kick();
   }
   retryFailed(): void { for (const d of this.repo.deliveries(this.sessionId, ['failed'])) this.repo.delivery(d.messageId, d.agentId, 'pending'); this.kick(); }
   async idle(timeoutMs = 30000): Promise<void> {

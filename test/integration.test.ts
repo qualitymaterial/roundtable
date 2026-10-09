@@ -111,7 +111,7 @@ test('recursive messaging stops at the exchange budget; identical loops are supp
   const f = fixture(async (actor, engine) => ({ ...noop, prompt: async text => {
     const input = JSON.parse(text) as { incoming: { sender: string } };
     const peer = engine.agents().find(a => a.id !== actor.id)!;
-    if (input.incoming.sender) engine.send({ sessionId: engine.sessionId, sender: actor.id, recipients: [peer.id], type: 'direct', body: `turn-${engine.session().usage.exchanges}` });
+    if (input.incoming.sender) engine.send({ sessionId: engine.sessionId, sender: actor.id, recipients: [peer.id], type: 'direct', expectsReply: true, body: `turn-${engine.session().usage.exchanges}` });
   } }), { limits: { exchanges: 8 } });
   try {
     const a = await agent(f.engine, 'A'); await agent(f.engine, 'B');

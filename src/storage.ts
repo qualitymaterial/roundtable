@@ -4,7 +4,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { id, timestamp, redact, type Delivery, type Message } from './domain.js';
 
-export type EntityKind = 'research' | 'worktree' | 'contract' | 'validation' | 'sandbox' | 'changegroup' | 'fallback' | 'steering' | 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note' | 'checkpoint' | 'job' | 'knowledge' | 'operation' | 'notification' | 'draft' | 'attachment' | 'evidence';
+export type EntityKind = 'agent_wait' | 'research' | 'worktree' | 'contract' | 'validation' | 'sandbox' | 'changegroup' | 'fallback' | 'steering' | 'session' | 'agent' | 'task' | 'artifact' | 'approval' | 'note' | 'checkpoint' | 'job' | 'knowledge' | 'operation' | 'notification' | 'draft' | 'attachment' | 'evidence';
 export interface StorageAdapter {
   get<T>(kind: EntityKind, id: string): T | undefined;
   list<T>(kind: EntityKind, sessionId?: string): T[];

@@ -125,6 +125,7 @@ export class TerminalUI {
     if (!this.interactive) { this.print(approval); return; }
     this.emit(this.panel(`APPROVAL  /  ${approval.state.toUpperCase()}`, [approval.reason, ...(approval.command ? [`Directory: ${approval.command.cwd}`, '', approval.command.text] : [`Capability: ${approval.capability}`]), '', `/approve ${approval.id}`, `/reject ${approval.id}`], '33'));
   }
+  endTurn(label: string): void { this.flushActivity(); this.streams.delete(label); this.responding.delete(label); }
   message(label: string, body: string, targets: string[], human: boolean, intermediate = false): void {
     this.streams.delete(label);
     this.responding.delete(label);

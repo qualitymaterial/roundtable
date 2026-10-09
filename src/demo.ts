@@ -72,7 +72,7 @@ function scriptedReply(modelId: string, context: Context): AssistantMessage['con
       case 1: return call('roundtable_task_create', { title: 'Compare persistent memory designs and produce a verifiable artifact' });
       case 2: return call('roundtable_task_claim', { taskId: (results[1] as Task).id });
       case 3: return call('roundtable_memory_write', { text: 'Authoritative append-only events plus session-scoped notes allow deterministic recovery.', kind: 'note' });
-      case 4: return call('roundtable_send', { recipients: [(results[0] as AgentRecord[]).find(a => a.model === 'beta')!.id], body: 'Please compare JSONL, SQLite and vector memory; exchange evidence.', type: 'task_request', taskId: (results[1] as Task).id });
+      case 4: return call('roundtable_send', { expectsReply: true, recipients: [(results[0] as AgentRecord[]).find(a => a.model === 'beta')!.id], body: 'Please compare JSONL, SQLite and vector memory; exchange evidence.', type: 'task_request', taskId: (results[1] as Task).id });
       default: return done('I created and claimed our shared task, recorded the event-store approach, and asked Beta for a comparison.');
     }
   }
@@ -80,7 +80,7 @@ function scriptedReply(modelId: string, context: Context): AssistantMessage['con
     switch (results.length) {
       case 0: return call('roundtable_memory_write', { text: 'JSONL is portable but coordination is manual. SQLite supports atomic indexed writes. Vector retrieval is useful as a secondary index.', kind: 'note' });
       case 1: return call('roundtable_task_update', { taskId: payload.incoming.taskId!, findings: 'Compared JSONL, SQLite and vector retrieval. Prefer SQLite for authoritative local state.' });
-      case 2: return call('roundtable_send', { recipients: [payload.incoming.sender], body: 'B_FINDINGS: SQLite transactions and bounded note retrieval offer reproducible local recovery; use vectors only as a secondary index.', type: 'task_response', taskId: payload.incoming.taskId! });
+      case 2: return call('roundtable_send', { expectsReply: true, recipients: [payload.incoming.sender], body: 'B_FINDINGS: SQLite transactions and bounded note retrieval offer reproducible local recovery; use vectors only as a secondary index.', type: 'task_response', taskId: payload.incoming.taskId! });
       default: return done('Compared three designs using the persistent notes tool and shared the findings with Alpha.');
     }
   }
@@ -88,7 +88,7 @@ function scriptedReply(modelId: string, context: Context): AssistantMessage['con
     case 0: return call('roundtable_memory_search', { query: 'SQLite' });
     case 1: return call('roundtable_task_update', { taskId: payload.incoming.taskId!, findings: 'Independent contribution: include ordered event examples, explicit invariants, and limitations for every design.' });
     case 2: return call('roundtable_artifact_publish', { name: 'persistent-memory-design.json', content: JSON.stringify(memoryDesign, null, 2), provenance: 'Deterministic Gamma model fixture; synthesizes the independently persisted Beta findings and memory requirements. This is a test artifact, not live model research.' });
-    case 3: return call('roundtable_send', { recipients: [payload.incoming.correlationId!], body: `C_ARTIFACT:${(results[2] as Artifact).id}`, type: 'artifact', artifacts: [(results[2] as Artifact).id], taskId: payload.incoming.taskId! });
+    case 3: return call('roundtable_send', { expectsReply: true, recipients: [payload.incoming.correlationId!], body: `C_ARTIFACT:${(results[2] as Artifact).id}`, type: 'artifact', artifacts: [(results[2] as Artifact).id], taskId: payload.incoming.taskId! });
     default: return done('Published a verifiable design artifact with competing designs, limitations and ordered event examples.');
   }
 }

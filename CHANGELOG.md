@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.0-dev.12
+
+- Handle standalone greetings and thanks locally without activating agents or tools.
+- Default peer sends to stored notifications; explicit actionable requests can wake recipients. Add durable per-agent waiting and prevent tool work without a human request.
+- Exclude idle/setup time from the collaboration timeout and clear completed/aborted live indicators.
+- Refine the Ink layout with a compact identity, shaded composer and model/status footer, preserving plain/ASCII fallbacks and scrollback.
+
 ## 0.2.0-dev.11 — Sprint 2: everyday UX and integrations
 
 - Rendered a restrained Markdown/code/diff subset, grouped before/after previews and reusable inline field validation; replaced raw skill/MCP/memory/workflow views with readable menus.

@@ -16,6 +16,7 @@ export class InkTerminal {
   private instance?: Instance; private suspendTerminal?: SuspendTerminal;
   private bannerShown = false; private view: 'compact' | 'verbose';
   private sessionHeading = '';
+  private lastPause?: string;
   private shownApprovals = new Set<string>();
   private chunks = new Map<string, string>();
   constructor(view: 'compact' | 'verbose' = 'compact') { this.view = view; }
@@ -39,25 +40,26 @@ export class InkTerminal {
   menu(title: string, rows: string[], hint?: string): void { this.mount(); this.controller.append('notice', title, [...rows, ...(hint ? [hint] : [])].join('\n')); }
   banner(project: string, home: string): void { void home; this.mount(); this.controller.update({ project }); if (!this.bannerShown) { this.bannerShown = true; this.controller.append('brand', 'Roundtable', project); } }
   session(session: SessionRecord): void {
+    if (session.state === 'active') this.lastPause = undefined;
     this.controller.update({ session: safeTerminalText(session.name ?? session.objective), state: session.state });
     const heading = JSON.stringify([session.id, session.name, session.objective]);
     if (heading !== this.sessionHeading) { this.sessionHeading = heading; this.controller.append('session', session.name ?? session.id.slice(0, 8), session.objective); }
   }
   summary(session: SessionRecord, agents: AgentRecord[], tasks: number, activeIds?: string[]): void {
-    this.session(session); this.controller.update({ agents: agents.filter(a => a.state !== 'removed').length, tasks });
+    this.session(session); this.controller.update({ agents: agents.filter(a => a.state !== 'removed').length, tasks, modelSummary: agents.filter(a => a.state !== 'removed').map(a => `${a.name}: ${a.model}${a.state === 'paused' ? ' (paused)' : ''}`).join(' · ') });
     if (activeIds) {
       if (this.controller.snapshot().live.some(a => !activeIds.includes(a.id) && (a.done || a.failed))) this.flushActivity();
       this.controller.update({ live: this.controller.snapshot().live.filter(a => activeIds.includes(a.id)) });
     }
   }
-  startupAgents(agents: AgentRecord[]): void { this.controller.update({ agents: agents.length }); this.menu('Participants', agents.map(a => `${a.name} · ${a.provider}/${a.model}`)); }
+  startupAgents(agents: AgentRecord[]): void { this.controller.update({ agents: agents.length, modelSummary: agents.map(a => `${a.name}: ${a.model}`).join(' · ') }); if (!this.compact) this.agents(agents); }
   agents(agents: AgentRecord[]): void { this.menu('Participants', agents.flatMap(a => [`${a.name} · ${a.provider}/${a.model} · ${a.state}`, `${a.id} · ${a.permissions.join(', ')}`])); }
   host(policy: NonNullable<SessionRecord['hostAccess']>): void { this.menu('Folder access', [`Read: ${policy.readRoots.join(', ') || 'off'}`, `Write: ${policy.writeRoots.join(', ') || 'off'}`, `Host shell: ${policy.shell ? 'exact command approval; OS user privileges' : 'off'}`]); }
   startupAccess(policy: NonNullable<SessionRecord['hostAccess']>): void { this.print(`Access: ${policy.writeRoots.length ? 'read/edit' : policy.readRoots.length ? 'read' : 'shared workspace only'} · host shell ${policy.shell ? 'per-command approval' : 'off'} · /host for roots`); }
   status(session: SessionRecord, agents: AgentRecord[], running: number, queued: number): void { this.menu('Session status', [`${session.state} · ${agents.length} participants · ${running} running · ${queued} queued`, session.reason ?? '', `Tokens: ${session.usage.tokens} / ${session.limits.tokens ?? 'off'}`, `Provider requests: ${session.usage.requests} / ${session.limits.requests}`, `Estimated cost: $${session.usage.dollars.toFixed(4)} / $${session.limits.dollars}`, '/budget to adjust limits']); }
   settings(defaults: SessionRecord['limits'], browser: boolean, folder: string, current?: SessionRecord['limits']): void { const lines = (x: SessionRecord['limits']) => `Tokens ${x.tokens ?? 'off'} · requests ${x.requests} · tools ${x.toolCalls} · estimated cost $${x.dollars}`; this.menu('Settings', [...(current ? [`Current session: ${lines(current)}`] : []), `New sessions: ${lines(defaults)}`, `Browser login: ${browser ? 'enabled' : 'disabled'}`, folder]); }
   tools(tools: unknown[]): void { this.menu('Tools', (tools as { name: string; permission: string; availability: string }[]).map(t => `${t.name} · ${t.permission} · ${t.availability}`)); }
-  paused(reason: string, help: string): void { void help; this.flushActivity(); this.chunks.clear(); this.controller.update({ live: [], state: 'paused' }); this.menu('Paused · work saved', [reason, '/resume to continue · /budget for limits']); }
+  paused(reason: string, help: string): void { if (this.lastPause === reason && this.controller.snapshot().state === 'paused') return; this.lastPause = reason; void help; this.flushActivity(); this.chunks.clear(); this.controller.update({ live: [], state: 'paused' }); this.menu('Paused · work saved', [reason, '/resume to continue · /budget for limits']); }
   pendingApproval(approval: Approval, label?: string): void { if (!this.shownApprovals.has(approval.id)) this.approval(approval, label); }
   approval(approval: Approval, label = approval.agentId): void { this.shownApprovals.add(approval.id); this.mount(); this.controller.append('approval', label, [`Capability: ${approval.capability}`, `Scope: ${approval.command ? 'single invocation with OS user privileges; not sandboxed' : 'participant capability within this session'}`, approval.reason, ...(approval.command ? [`Directory: ${literalApprovalText(approval.command.cwd)}`, literalApprovalText(approval.command.text)] : []), `/approve ${approval.id}`, `/reject ${approval.id}`].join('\n')); }
   setView(view: 'compact' | 'verbose'): void { this.flushActivity(); this.view = view; }
@@ -72,7 +74,8 @@ export class InkTerminal {
   }
   receive(event: Activity, agent?: AgentRecord): void {
     this.mount(); const id = agent?.id ?? event.agentId ?? event.message?.sender ?? 'system';
-    const label = safeTerminalText(agent?.name ?? id); const model = agent ? safeTerminalText(`${agent.provider}/${agent.model}`) : '';
+    const label = safeTerminalText(agent?.name ?? (id === 'system' ? 'Roundtable' : id)); const model = agent ? safeTerminalText(`${agent.provider}/${agent.model}`) : '';
+    if (event.type === 'turn_end') { this.flushActivity(); this.chunks.delete(id); this.controller.endTurn(id); return; }
     if (event.type === 'stream') {
       const raw = ((this.chunks.get(id) ?? '') + (event.delta ?? '')).slice(0, 24000); this.chunks.set(id, raw);
       const hold = Math.max(128, ...Object.entries(process.env).filter(([k]) => /KEY|TOKEN|SECRET|PASSWORD/i.test(k)).map(([, v]) => v?.length ?? 0));
