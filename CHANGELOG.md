@@ -6,7 +6,7 @@
 - Preserved existing runtime configuration, credentials and sessions. Installed application files no longer depend on a development npm link.
 - Verified installation from a different folder without npm/Node on PATH, the deterministic collaboration demo and fresh-process session recovery. All 36 application tests pass.
 - The user confirmed that the harness launched in their own Windows PowerShell after running the installer with `-Launch`. A separate bare-command check in a new user terminal remains unconfirmed.
-- Prepared the initial source publication at `qualitymaterial/roundtable`; runtime data and raw verification/session logs are excluded. No npm package publication is included.
+- Published initial source commit `80a29d2` to `qualitymaterial/roundtable` on `main`; runtime data and raw verification/session logs are excluded. No npm package publication is included.
 
 ## Host harness and global launch — 2026-10-08
 

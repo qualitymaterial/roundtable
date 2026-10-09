@@ -1,5 +1,7 @@
 # Verification evidence
 
+Publication check on 2026-10-09: `npm run check` passed strict typing, lint, build and all 36 tests (`github-initial-check.txt`, retained locally). The initial 61-file source commit passed the credential-pattern and excluded-path checks. Upstream license notices retain their original whitespace. GitHub `main` was verified against local initial commit `80a29d2` after pushing.
+
 Verified on 2026-10-08 using native Windows, Node 24.19.0, npm 11.17.0 and pinned Pi SDK 1.1.0. Raw evidence is retained locally under artifacts/verification/ and excluded from Git because it can contain machine paths and session content. The summaries and reproduction commands here are public. Test success comes from process exit codes and assertions, not advisory model review.
 
 | Check | Result |

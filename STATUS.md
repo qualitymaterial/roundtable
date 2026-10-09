@@ -4,7 +4,7 @@ Updated: 2026-10-09. Canonical owner: this repository's STATUS.md. Detailed evid
 
 ## Current milestone
 
-Working multi-agent terminal harness with host filesystem tools, approved host commands, global launch and a terminal UI pass. Native Windows, Node 24.19.0/npm 11.17.0, official Pi packages pinned to 1.1.0. The user confirmed successful Windows launch on 2026-10-09 and authorized initial source publication to https://github.com/qualitymaterial/roundtable. npm publication remains disabled.
+Working multi-agent terminal harness with host filesystem tools, approved host commands, global launch and a terminal UI pass. Native Windows, Node 24.19.0/npm 11.17.0, official Pi packages pinned to 1.1.0. The user confirmed successful Windows launch on 2026-10-09. Initial source commit 80a29d2 was pushed to main at https://github.com/qualitymaterial/roundtable and the remote commit was verified. npm publication remains disabled.
 
 ## Operational functionality
 
