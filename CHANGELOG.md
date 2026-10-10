@@ -140,3 +140,10 @@
 ## 0.2.0-dev.5 — recovery and daily-use milestone
 
 Added task transfer/removal recovery; shared guarded edits and literal patches; durable tool-operation receipts and explicit failure reconciliation; project identity; effort/output/context controls; readable views and buffered stream previews; scoped image/text/CSV snapshots; durable drafts and audience/queue controls; names/archive; staged collaboration, contribution evidence and independent JSON checks; owner notifications and SQL-bounded transcript retrieval. The full audit backlog is tracked in docs/IMPLEMENTATION_CHECKLIST.md and is not complete.
+
+
+### CI portability and Windows host commands
+
+- Compare canonical fixture paths on macOS, retain detailed shell failure output, and bound test-file concurrency.
+- Initialize Windows PowerShell with built-in module lookup before parsing the approved command, avoiding slow machine-module discovery. Custom modules require explicit absolute-path import. Preserve approvals, literal scripts, exit status, timeout and cancellation.
+- Verified Windows/macOS/Linux checks and demos, plus Windows standalone installation in Actions run 38009795308.
