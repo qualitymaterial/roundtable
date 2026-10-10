@@ -1,0 +1,13 @@
+name: Windows shell diagnosis
+on:
+  push:
+    paths: ['scripts/diagnose-windows-shell.mjs', '.github/workflows/shell-probe.yml']
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: windows-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - run: node scripts/diagnose-windows-shell.mjs
