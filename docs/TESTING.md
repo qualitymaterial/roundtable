@@ -237,3 +237,8 @@ Eight new behavior regressions cover narrow courtesy matching; zero model calls/
 First full run found one stale fixture that recognized ordinary prompts by JSON field order; structural detection repaired it without weakening compaction assertions. The first new resize assertion incorrectly measured previously printed Static scrollback as live content; it now checks the mutable region. Early implementation type errors were resolved before the full gate. These local deterministic tests are not a hosted model-behavior study.
 
 Windows acceptance evidence: conversation-installed-greeting.json and conversation-install.txt under artifacts/verification. A disposable three-participant session received one human hello and one Roundtable response; SQLite confirmed zero requests, tool events, tasks and artifacts. Installed CLI restoration, resume, clean exit and global command resolution were checked separately. Live compatibility admission remains metered. Existing user sessions, credentials and preferences were not used by these fixtures.
+
+
+### Hosted CI portability repair
+
+The test runner limits concurrent test files to two. Each file can create SDK sessions, parser workers and real child processes; bounding file concurrency avoids oversubscribing smaller hosted runners while preserving concurrent-agent tests. Production shell/parser deadlines remain unchanged. Canonical-path assertions resolve fixture paths (including macOS /var aliases). Shell/job failures now include fixture output and termination details, and job assertions allow timeout cleanup to finish. Hosted verification is in progress; local results alone do not establish CI success.
