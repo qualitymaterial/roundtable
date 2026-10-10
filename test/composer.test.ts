@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture, agent, noop } from './helpers.js';
 import { completeFileMention, mentionedFiles, editDraft } from '../src/composer.js';
@@ -13,7 +13,7 @@ test('project file completion handles spaces and blocks traversal and credential
     const root = f.session.workspace; mkdirSync(join(root, 'source files')); writeFileSync(join(root, 'source files', 'one.txt'), 'one'); writeFileSync(join(root, '.env'), 'secret');
     assert.deepEqual(completeFileMention('Read @sou', root)[0], ['Read @"source files/']);
     assert.deepEqual(completeFileMention('Read @"source files/o', root)[0], ['Read @"source files/one.txt"']);
-    assert.deepEqual(mentionedFiles('Read @"source files/one.txt" twice @"source files/one.txt"', root), [join(root, 'source files', 'one.txt')]);
+    assert.deepEqual(mentionedFiles('Read @"source files/one.txt" twice @"source files/one.txt"', root), [realpathSync(join(root, 'source files', 'one.txt'))]);
     assert.deepEqual(completeFileMention('Read @../', root)[0], []);
     assert.throws(() => mentionedFiles('Read @.env', root), /credential/);
     assert.throws(() => mentionedFiles('Read @../../test.db', root), /inside the project/);

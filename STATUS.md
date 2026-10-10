@@ -20,8 +20,12 @@ Final conversation-final-check.txt: strict TypeScript, ESLint, build and 146 tes
 
 Windows acceptance on a disposable installed session confirmed a single greeting response and zero requests/tools/tasks/artifacts in SQLite, plus resume and clean terminal exit. Installation details and final compiled-file checks are recorded with the acceptance evidence. Real user sessions and private runtime state remain untouched.
 
+## GitHub CI follow-up
+
+Run 38002065057 for a2809e4: Ubuntu check and demo passed. macOS failed two tests comparing unresolved /var paths with canonical /private/var paths. Windows failed host-command exit-code and background-job completion assertions; the job test waited 10 seconds, and the host test lasted about 60 seconds. Child output/stop reason is absent from the failing assertion, so the Windows root cause remains unconfirmed. The same macOS failures and Windows background-job failure also occurred on 826b9a4. Local 146-test success does not establish hosted CI success. Logs: https://github.com/qualitymaterial/roundtable/actions/runs/38002065057 . Canonical-path assertions now use realpathSync. Windows failures now include the full redacted child/job result, and the job assertion waits for timeout cleanup. Local npm run check passed: 143 tests, 3 opt-in sandbox skips, zero failures. Hosted verification is pending.
+
 ## Boundaries and next executable task
 
 Courtesy matching is intentionally narrow English matching, not general semantic intent detection. Model adherence still determines scope after an actual request; explicit wake requests remain subject to budgets. Live provider admission still uses metered probes. Hosted behavioral validation, broader cross-platform acceptance, native-plugin isolation and rendered browser automation remain unverified or incomplete. Input stays inline rather than pinned to a full-screen viewport.
 
-Next: user acceptance with configured real providers: hello should yield one local reply with no agent work; a concrete task should still complete with evidence; idle/wait and cancellation should remain quiet. Only run paid comparisons when explicitly requested.
+Next: normalize canonical-path test expectations and capture Windows child exit/output/stop diagnostics, then verify all three hosted jobs. After that, user acceptance with configured real providers: hello should yield one local reply with no agent work; a concrete task should still complete with evidence; idle/wait and cancellation should remain quiet. Only run paid comparisons when explicitly requested.

@@ -66,7 +66,7 @@ test('host commands require exact per-agent single-use human approval before rea
     const other = await tool<{ approvalRequired: boolean }>(f.engine, b, 'host_execute', args); assert.equal(other.data.approvalRequired, true);
     const changed = await tool<{ approvalRequired: boolean }>(f.engine, a, 'host_execute', { ...args, command: args.command + ' changed' }); assert.equal(changed.data.approvalRequired, true);
     const executed = await tool<{ code: number; output: string }>(f.engine, a, 'host_execute', args);
-    assert.equal(executed.ok, true); assert.equal(executed.data.code, 0); assert.ok(executed.data.output.includes('roundtable-host-test'));
+    assert.equal(executed.ok, true); assert.equal(executed.data.code, 0, JSON.stringify(executed)); assert.ok(executed.data.output.includes('roundtable-host-test'));
     assert.equal(f.repo.get<Approval>('approval', requested.data.approvalId)?.state, 'consumed');
     assert.equal((await tool<{ approvalRequired: boolean }>(f.engine, a, 'host_execute', args)).data.approvalRequired, true);
     assert.ok(f.repo.events(s.id).some(e => e.type === 'host_command_consumed'));

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { fixture, agent, tool, noop } from './helpers.js';
 import { Engine } from '../src/engine.js';
@@ -83,7 +83,7 @@ test('project identity survives session restoration independently of the launch 
   try {
     const session = Engine.create(f.repo, join(f.home, 'workspaces'), 'Project identity', { projectRoot: f.home });
     const restored = new Engine(f.repo, session.id, async () => noop);
-    assert.equal(restored.session().projectRoot, f.home); await restored.close();
+    assert.equal(restored.session().projectRoot, realpathSync(f.home)); await restored.close();
   } finally { await f.close(); }
 });
 

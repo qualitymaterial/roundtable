@@ -109,9 +109,10 @@ test('background jobs require distinct approvals, persist output and cancel with
     f.engine.decide(request.data.approvalId, true);
     const changed = await tool<{ approvalRequired: boolean }>(f.engine, a, 'host_job_start', { ...args, timeoutMs: 11000 }); assert.equal(changed.data.approvalRequired, true);
     const started = await tool<{ id: string }>(f.engine, a, 'host_job_start', args); assert.equal(started.ok, true);
-    const until = Date.now() + 10000;
+    // Allow timeout termination and durable result recording to finish before asserting.
+    const until = Date.now() + args.timeoutMs + 5000;
     while (f.engine.jobs.read(started.data.id).state === 'running' && Date.now() < until) await new Promise(r => setTimeout(r, 20));
-    assert.equal(f.engine.jobs.read(started.data.id).state, 'done'); assert.match(f.engine.jobs.read(started.data.id).output, /background-fixture/);
+    assert.equal(f.engine.jobs.read(started.data.id).state, 'done', JSON.stringify(f.engine.jobs.read(started.data.id))); assert.match(f.engine.jobs.read(started.data.id).output, /background-fixture/);
     const jobs = new BackgroundJobs(f.repo, f.session.id, async (_command, _cwd, signal) => new Promise(resolve => signal.addEventListener('abort', () => resolve({ code: 1 }), { once: true })));
     const pending = jobs.start(a.id, 'fixture-only', f.home, 10000); await jobs.stop(pending.id); assert.equal(jobs.read(pending.id).state, 'cancelled'); await jobs.close();
     const realJobs = new BackgroundJobs(f.repo, f.session.id, executeHost);
