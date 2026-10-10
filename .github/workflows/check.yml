@@ -18,9 +18,6 @@ jobs:
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run check
-      - name: Diagnose Windows shell startup
-        if: failure() && runner.os == 'Windows'
-        run: node scripts/diagnose-windows-shell.mjs
       - run: node dist/cli.js demo
         env:
           ROUNDTABLE_HOME: ${{ runner.temp }}/roundtable-demo

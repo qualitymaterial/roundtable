@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdir, readFile, writeFile, symlink, realpath } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fixture, agent, tool } from './helpers.js';
-import { hostPath, normalizeHostPolicy } from '../src/host-tools.js';
+import { hostPath, normalizeHostPolicy, executeHost } from '../src/host-tools.js';
 import type { Approval } from '../src/domain.js';
 
 test('host tools require permissions and canonical roots; block credentials and escaping links', async () => {
@@ -70,5 +70,28 @@ test('host commands require exact per-agent single-use human approval before rea
     assert.equal(f.repo.get<Approval>('approval', requested.data.approvalId)?.state, 'consumed');
     assert.equal((await tool<{ approvalRequired: boolean }>(f.engine, a, 'host_execute', args)).data.approvalRequired, true);
     assert.ok(f.repo.events(s.id).some(e => e.type === 'host_command_consumed'));
+  } finally { await f.close(); }
+});
+
+
+test('host shell preserves literal scripts and exit codes with bounded built-in module lookup', async () => {
+  const f = fixture();
+  try {
+    const command = process.platform === 'win32'
+      ? `using namespace System.Text
+Write-Output ([StringBuilder]::new("quote's; $()"+'literal').ToString())
+[Console]::WriteLine($env:PSModulePath)
+exit 7`
+      : `printf "quote's; literal\\n"
+exit 7`;
+    const result = await executeHost(command, f.home, new AbortController().signal, 10000) as { code: number; output: string; stopped?: string };
+    assert.equal(result.code, 7, JSON.stringify(result)); assert.equal(result.stopped, undefined);
+    assert.match(result.output, /quote's; literal/);
+    if (process.platform === 'win32') {
+      const modulePath = result.output.trim().split(/\r?\n/)[1];
+      assert.equal(modulePath?.toLowerCase(), join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'Modules').toLowerCase());
+    }
+    const limited = await executeHost(process.platform === 'win32' ? 'Start-Sleep -Seconds 30' : 'sleep 30', f.home, new AbortController().signal, 250) as { code: number; stopped: string };
+    assert.equal(limited.stopped, '0.25 second timeout'); assert.notEqual(limited.code, 0);
   } finally { await f.close(); }
 });

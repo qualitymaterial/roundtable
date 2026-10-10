@@ -84,3 +84,6 @@ MCP uses per-agent connection leases (maximum 32, 60-second idle expiry, bounded
 Use `roundtable_wait {}` when awaiting human direction, then finish the response. It persists across restart and blocks further tools and peer-triggered work until targeted human/system input. It is distinct from pausing/removing an agent and should not be used while awaiting a needed peer result. `roundtable_agents_list` includes `waitingForHuman`.
 
 `roundtable_send` is a non-waking notification by default (`task_request` is the exception). Set `expectsReply: true` for a concrete question, action request or result that requires processing now. Do not request responses to acknowledgments/readiness updates. Notifications remain readable in their threads; an acknowledged delivery alone does not prove a model consumed it.
+
+
+Windows host shell initialization limits automatic PowerShell module discovery to `$PSHOME/Modules`. Machine/user module directories are not searched automatically: an approved command can explicitly `Import-Module` a trusted module by absolute path. This avoids slow or unrelated module discovery while retaining literal command parsing, exit codes, approvals, timeout and cancellation. It is not OS isolation.

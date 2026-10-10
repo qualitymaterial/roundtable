@@ -215,7 +215,13 @@ export async function executeHost(command: string, cwd: string, signal: AbortSig
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => /^(PATH|PATHEXT|SystemRoot|WINDIR|COMSPEC|TEMP|TMP|HOME|USERPROFILE|APPDATA|LOCALAPPDATA|LANG|LC_ALL)$/i.test(key)));
   return new Promise((resolveResult, reject) => {
     const shell = process.platform === 'win32' ? join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe') : '/bin/sh';
-    const args = process.platform === 'win32' ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', command] : ['-c', command];
+    // Windows PowerShell adds machine module paths at startup even when its
+    // inherited PSModulePath is restricted. Reset it after startup so built-in
+    // commands do not scan unrelated installed modules (e.g. the CI Azure SDK).
+    // Parse the original command separately to retain leading using/param
+    // statements, literal quotes, multiline input and explicit exit semantics.
+    const windowsCommand = `$env:PSModulePath = [IO.Path]::Combine($PSHOME, 'Modules'); & ([scriptblock]::Create('${command.replaceAll("'", "''")}'))`;
+    const args = process.platform === 'win32' ? ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', windowsCommand] : ['-c', command];
     // Own cancellation rather than spawn's AbortError: await close before releasing
     // the job/DB, and terminate the tree before its leader disappears on Windows.
     const child = spawn(shell, args, { cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
