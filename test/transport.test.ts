@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { requireValidation } from '../src/recovery.js';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -80,6 +81,7 @@ test('three configured HTTP providers pass admission and collaborate through Pi 
     const alpha = await engine.addAgent(configs[0]!); await engine.addAgent(configs[1]!); const gamma = await engine.addAgent(configs[2]!);
     engine.send({ sessionId: session.id, sender: 'human', recipients: [alpha.id], type: 'human', body: demoObjective }); await engine.idle();
     const task = repo.list<Task>('task', session.id)[0]; assert.ok(task, JSON.stringify({ errors, deliveries: repo.deliveries(session.id, ['failed']) }));
+    requireValidation(engine, { taskId: task.id, artifactName: 'persistent-memory-design.json', description: 'HTTP fixture requires expected design fields and selected design', validator: { kind: 'json', required: ['title', 'alternatives', 'invariants', 'exampleEvents'], equals: { selected: 'sqlite-events' } } });
     engine.send({ sessionId: session.id, sender: 'human', recipients: [gamma.id], type: 'human', body: 'Contribute an independent artifact using the shared findings.', taskId: task.id, correlationId: alpha.id }); await engine.idle();
     const report = verifyCollaboration(repo, session.id, home); assert.equal(report.passed, true, JSON.stringify(report));
     assert.equal(report.distinctProviders, 3); assert.equal(report.successfulToolUsers, 3);

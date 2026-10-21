@@ -1,3 +1,4 @@
+import { taskEvidenceStatus } from './verification-gate.js';
 import { taskValidation } from './recovery.js';
 import { z } from 'zod';
 import type { Engine } from './engine.js';
@@ -20,7 +21,7 @@ export function validateStages(input: z.input<typeof Stage>[]) {
 function acceptance(engine: Engine): string[] {
   const current = engine.session().workflow?.stages[engine.session().workflow!.index]; if (!current) return [];
   const tasks = engine.repo.list<Task>('task', engine.sessionId); const errors: string[] = [];
-  for (const title of current.taskTitles ?? []) { const matching = tasks.filter(t => t.title === title); if (!matching.length || matching.some(t => t.state !== 'done')) errors.push('Complete required task: ' + title); }
+  for (const title of current.taskTitles ?? []) { const matching = tasks.filter(t => t.title === title); if (!matching.length || matching.some(t => t.state !== 'done' || !taskEvidenceStatus(engine, t).passed)) errors.push('Complete required task: ' + title); }
   if (current.requireValidation) {
     const checks = tasks.flatMap(t => taskValidation(engine, t.id));
     if (!checks.length || checks.some(c => !c.passed)) errors.push('All active required artifact checks must pass; at least one is required');

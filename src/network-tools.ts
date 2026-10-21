@@ -1,4 +1,5 @@
 import { installResearchTools } from './research.js';
+import { installWebTools } from './web-tools.js';
 import { Type, type TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import type { ToolRegistry } from './tools.js';
@@ -9,6 +10,7 @@ function endpoint(variable: string): string {
 }
 export function installNetworkTools(registry: ToolRegistry): void {
   installResearchTools(registry);
+  installWebTools(registry);
   const connections = registry.engine.connections;
   registry.register('web_research', 'Query the operator-configured research service. No arbitrary URL fetching. Service must accept POST {query} and return JSON.', Type.Object({ query: Type.String({ minLength: 1, maxLength: 1000 }) }), 'network.research', async (args, { signal }) => {
     const url = endpoint('ROUNDTABLE_RESEARCH_URL'); const token = process.env.ROUNDTABLE_RESEARCH_TOKEN;

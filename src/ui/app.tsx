@@ -19,10 +19,20 @@ export function composerWindow(c: Composer, columns: number) {
 
 const asciiBorder = { topLeft: '+', top: '-', topRight: '+', left: '|', bottomLeft: '+', bottom: '-', bottomRight: '+', right: '|' };
 
-export function MessageEntry({ entry, theme }: { entry: Entry; theme: Theme; width?: number }) {
-  if (entry.kind === 'brand') return <Box flexDirection="column" marginTop={1} marginBottom={1}>
-    <Box justifyContent="space-between"><Text bold><Text color={theme.accent}>{theme.ascii ? '>' : '›'}</Text> {entry.title}</Text><Text dimColor={theme.color}>LOCAL</Text></Box>
-    <Text dimColor={theme.color} wrap="truncate-middle">{entry.body}</Text>
+// Three seats around a shared table. Keep the mark cell-aligned in ordinary terminals.
+const tableMark = ['        ●        ', '     ▄▀▀▀▀▀▄     ', ' ●  █   ✦   █  ● ', '     ▀▄▄▄▄▄▀     '];
+const asciiTableMark = ['        o        ', '     .-----.     ', ' o  (   *   )  o ', "     '-----'     "];
+
+export function MessageEntry({ entry, theme, width = 80 }: { entry: Entry; theme: Theme; width?: number }) {
+  if (entry.kind === 'brand') return <Box flexDirection={width >= 60 ? 'row' : 'column'} marginTop={1} marginBottom={1}>
+    {width >= 20 && <Box flexDirection="column" flexShrink={0} marginRight={width >= 60 ? 3 : 0} marginBottom={width >= 60 ? 0 : 1}>
+      {(theme.ascii ? asciiTableMark : tableMark).map((line, i) => <Text key={i} color={theme.accent}>{line}</Text>)}
+    </Box>}
+    <Box flexDirection="column" flexGrow={1} flexShrink={1} paddingTop={width >= 60 ? 1 : 0}>
+      <Box justifyContent="space-between"><Text bold wrap="truncate-end">{entry.title}</Text>{width >= 24 && <Text dimColor={theme.color}>LOCAL</Text>}</Box>
+      {width >= 38 && <Text wrap="truncate-end">Independent minds. Shared purpose.</Text>}
+      <Text dimColor={theme.color} wrap={theme.ascii ? 'wrap' : 'truncate-middle'}>{entry.body}</Text>
+    </Box>
   </Box>;
   if (entry.kind === 'session') return <Box flexDirection="column" marginBottom={1}>
     <Text dimColor={theme.color}>SESSION / {entry.title}</Text>
@@ -31,7 +41,7 @@ export function MessageEntry({ entry, theme }: { entry: Entry; theme: Theme; wid
   const color = entry.kind === 'error' ? theme.error : entry.kind === 'approval' ? theme.warning : undefined;
   return <Box flexDirection="column" marginBottom={1}>
     {entry.title && <Text bold color={color}>{decoration(entry.kind === 'error' ? 'Error · ' : entry.kind === 'approval' ? 'Approval required · ' : '', theme)}{entry.title}{entry.model && <Text bold={false} dimColor={theme.color}>{decoration(` · ${entry.model}`, theme)}</Text>}</Text>}
-    {entry.kind === 'message' && entry.agentId !== 'human' ? <Markdown text={entry.body} theme={theme} /> : <Text wrap="wrap" dimColor={theme.color && entry.kind === 'activity'}>{entry.body}</Text>}
+    {entry.kind === 'message' && entry.agentId !== 'human' || entry.body.startsWith('```diff\n') ? <Markdown text={entry.body} theme={theme} /> : <Text wrap="wrap" dimColor={theme.color && entry.kind === 'activity'}>{entry.body}</Text>}
   </Box>;
 }
 export function StatusLine({ state, theme }: { state: Presentation; theme: Theme }) {
@@ -43,6 +53,13 @@ export function StatusLine({ state, theme }: { state: Presentation; theme: Theme
       <Box flexShrink={1}><Text><Text color={state.state === 'active' ? theme.accent : theme.warning}>{theme.ascii ? '*' : '◉'}</Text><Text dimColor={theme.color}>{decoration(` ${state.agents} agents · ${state.tasks} tasks · ${stateLabel}`, theme)}</Text></Text></Box>
       <Text dimColor={theme.color}>{columns >= 65 ? '/agents  /help' : '/help'}</Text>
     </Box>
+  </Box>;
+}
+export function WorkPlan({ lines, theme, limit = 6 }: { lines: string[]; theme: Theme; limit?: number }) {
+  if (!lines.length) return null;
+  return <Box flexDirection="column" marginTop={1}>
+    <Text bold color={theme.accent}>Work plan <Text bold={false} dimColor={theme.color}>/plan for details</Text></Text>
+    {lines.slice(-limit).map((line, i) => <Text key={i} wrap="truncate-end">{decoration(line, theme)}</Text>)}
   </Box>;
 }
 export function PromptComposer({ composer: c, theme, columns }: { composer: Composer; theme: Theme; columns: number }) {
@@ -80,6 +97,7 @@ export function RoundtableApp({ controller, theme, terminalReady, inputEnabled =
   return <Box flexDirection="column" width={width} marginLeft={columns > 14 ? 1 : 0}>
     <Static items={state.entries} style={{ width, marginLeft: columns > 14 ? 1 : 0 }}>{entry => <MessageEntry key={entry.id} entry={entry} theme={theme} width={width} />}</Static>
     {!state.closed && <Box flexDirection="column">
+      <WorkPlan lines={state.workRows ?? []} theme={theme} limit={rows < 24 ? 3 : 7} />
       {state.live.slice(-Math.max(1, Math.min(3, Math.floor((rows - 12) / 4)))).map(agent => <Box key={agent.id} flexDirection="column" marginTop={1}>
         <Text><Text bold>{agent.label}</Text><Text dimColor={theme.color}>{decoration(` · ${agent.running ? 'working' : 'responding'}${agent.model ? ` · ${agent.model}` : ''}`, theme)}</Text></Text>
         {agent.tool && <Text dimColor={theme.color}>{decoration(`  ${agent.tool} · ${agent.running ? `${agent.running} running` : 'completed'} · ${agent.done} done${agent.failed ? ` · ${agent.failed} failed` : ''}`, theme)}</Text>}

@@ -6,7 +6,7 @@ import { safeTerminalText } from '../terminal-ui.js';
 export type Entry = { id: number; kind: 'brand' | 'session' | 'message' | 'notice' | 'error' | 'approval' | 'activity'; title: string; body: string; agentId?: string; model?: string };
 export type LiveAgent = { id: string; label: string; model: string; text: string; tool?: string; running: number; done: number; failed: number };
 export type Composer = { mode: 'idle' | 'chat' | 'ask' | 'pick'; label: string; text: string; cursor: number; secret: boolean; choices: { index: number; label: string }[]; selected: number; suggestions: string[]; notice?: string };
-export type Presentation = { modelSummary?: string; entries: Entry[]; live: LiveAgent[]; composer: Composer; project: string; session: string; state: string; agents: number; tasks: number; closed: boolean };
+export type Presentation = { modelSummary?: string; workRows?: string[]; entries: Entry[]; live: LiveAgent[]; composer: Composer; project: string; session: string; state: string; agents: number; tasks: number; closed: boolean };
 export const graphemes = (value: string): string[] => [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value)].map(s => s.segment);
 const clean = (value: string) => safeTerminalText(value);
 export function fuzzyChoices(labels: string[], query: string): { index: number; label: string }[] {

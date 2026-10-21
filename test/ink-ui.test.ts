@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createElement } from 'react';
+import { Box } from 'ink';
 import { render } from 'ink-testing-library';
-import { RoundtableApp } from '../src/ui/app.js';
+import { RoundtableApp, WorkPlan, MessageEntry } from '../src/ui/app.js';
 import { PresentationController, graphemes, fuzzyChoices } from '../src/ui/controller.js';
 import { terminalTheme } from '../src/ui/theme.js';
 import { composerWindow } from '../src/ui/app.js';
@@ -10,6 +11,36 @@ import { literalApprovalText } from '../src/ui/terminal.js';
 import stringWidth from 'string-width';
 
 const tick = () => new Promise<void>(resolve => setTimeout(resolve, 50));
+
+test('startup table mark fits wide and narrow terminals with ASCII and no-color support', () => {
+  for (const ascii of [false, true]) for (const width of [80, 60, 38, 28, 20, 12]) {
+    const theme = terminalTheme({ NO_COLOR: '1', ...(ascii ? { ROUNDTABLE_ASCII: '1' } : {}) });
+    const view = render(createElement(Box, { width }, createElement(MessageEntry, { entry: { id: 1, kind: 'brand', title: 'Roundtable', body: 'C:/Project with a long folder name' }, theme, width })));
+    try {
+      const frame = view.lastFrame()!;
+      assert.match(frame, /Roundtable/);
+      assert.doesNotMatch(frame, /\x1b/);
+      for (const line of frame.split('\n')) assert.ok(stringWidth(line) <= width, `${width}: ${line}`);
+      if (width >= 20) {
+        assert.match(frame, ascii ? /o  \(   \*   \)  o/ : /●  █   ✦   █  ●/);
+        assert.ok(frame.split('\n').some(line => line.trim() === (ascii ? 'o' : '●')));
+      }
+      else assert.doesNotMatch(frame, /[●✦▄▀█*]/);
+      if (ascii) assert.doesNotMatch(frame, /[^\x20-\x7e\n]/);
+      if (width >= 60) assert.match(frame, /Independent minds\. Shared purpose\./);
+    } finally { view.unmount(); view.cleanup(); }
+  }
+});
+
+test('work plan exposes editor, blockers and checks while review displays a readable diff', async () => {
+  const theme = terminalTheme({ NO_COLOR: '1' });
+  const view = render(createElement(WorkPlan, { lines: ['Fix real project', 'Editor Sage · review · reviews 1/2', 'tests: passed', 'Waiting for Vale'], theme }));
+  try { assert.match(view.lastFrame()!, /Editor Sage/); assert.match(view.lastFrame()!, /reviews 1\/2/); assert.match(view.lastFrame()!, /tests: passed/); assert.match(view.lastFrame()!, /Waiting for Vale/); }
+  finally { view.unmount(); view.cleanup(); }
+  const diff = render(createElement(MessageEntry, { entry: { id: 1, kind: 'notice', title: 'Checked changes', body: '```diff\n-old\n+fixed\n```' }, theme }));
+  try { assert.match(diff.lastFrame()!, /Checked changes/); assert.match(diff.lastFrame()!, /-old/); assert.match(diff.lastFrame()!, /\+fixed/); assert.ok(!diff.lastFrame()!.includes('```')); }
+  finally { diff.unmount(); diff.cleanup(); }
+});
 test('Ink transcript retains completed messages, exact approvals and concurrent activity above a stable composer', async () => {
   const controller = new PresentationController(); controller.commands = () => ['/help', '/host', '/pause'];
   controller.update({ session: 'Inspect memory designs', agents: 3, tasks: 2, state: 'active' });

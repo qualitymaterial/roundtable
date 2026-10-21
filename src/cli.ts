@@ -25,6 +25,9 @@ import type { Approval } from './domain.js';
 import { InkTerminal } from './ui/terminal.js';
 import { TerminalUI } from './terminal-ui.js';
 import { budgetHelp } from './budgets.js';
+import { startCodeWork, workBoard, codeDiff, integrateCodeWork, reworkCodeWork, codeTask, renewCodeWork } from './code-work.js';
+import { collaborationView } from './code-collaboration.js';
+import { configureRelevance, readRelevanceConfig } from './file-relevance.js';
 import { setup, saveJson } from './setup.js';
 import { completionReport, resolveFailure, executionExitCode } from './completion.js';
 import { usageReport } from './usage.js';
@@ -42,7 +45,7 @@ import { readSettings, saveSettings } from './settings.js';
 import { editLimit, mcpMenu, skillsMenu } from './preferences-ui.js';
 import { Skills } from './skills.js';
 import { commandEntries, commandPicker, recentSessions, sessionPicker } from './navigation.js';
-import { connectionReport, diagnosticsMenu, endpointMenu } from './connection-ui.js';
+import { connectionReport, diagnosticsMenu, webDiagnosticsMenu, endpointMenu } from './connection-ui.js';
 import { captureSession, writeBundle, readBundle, restoreBundle } from './session-bundles.js';
 import { editDraft, mentionedFiles } from './composer.js';
 import { ProjectProfiles } from './projects.js';
@@ -108,6 +111,7 @@ roundtable endpoints | diagnostics | favorites
 /worktree [create|review|merge] <branch-or-id>   Optional Git review; no automatic commit or push
 /sandbox [grant|revoke|run]   Isolated project execution; grants expire and can be revoked
 /recovery | /task-repair <task-id> <release|reopen|cancel|dependencies> <reason>   Diagnose and repair paused work
+/require-evidence <json-file> | /drop-evidence <contract-id> <reason>   Protected evidence criteria
 /require-check <json-file> | /check <contract-id> <artifact-id> | /drop-check <contract-id> <reason>   Required validation
 /fallback <agent> [provider model] | /provider-recover <agent>   Explicit provider recovery; no automatic replay
 roundtable demo                 Deterministic model fixtures using three real Pi sessions
@@ -117,6 +121,12 @@ roundtable validate <session-id>    Independently validate the memory demo artif
 roundtable session verify <id>     Check persisted collaboration acceptance without inference
 
 Interactive commands:
+/work <brief>                  Assign isolated coding work with a named check and batched review
+/plan | /work-diff <task-id> | /integrate <task-id>   Inspect work and apply a checked proposal
+/team <task-id>                Read investigations, peer discussion, shared plan and contributions
+/judgment                     Show optional file relevance configuration; /judgment off disables new work
+/renew-work <task-id>          Review and renew the same check commands for 30 minutes
+/rework <task-id> <reason>       Return a completed proposal for repair; preserve its first-pass evidence
 /commands [search]              Search commands; / alone opens the picker
 /view [compact|verbose]         Compact activity panels or full live trace; saves preference
 /sessions                      Search and open saved sessions, paused for inspection
@@ -157,6 +167,7 @@ Use @path or @"path with spaces" to attach project files; Tab completes paths.
 Example /add-agent {"name":"My agent","provider":"openrouter","model":"ID from /models","instructions":"Choose your own approach"}`;
 
 async function login(registry: ProviderRegistry, provider?: string, type?: string, existing?: TerminalInput): Promise<void> {
+  if (!existing && ui instanceof InkTerminal) ui.banner(process.cwd(), home);
   const input = existing ?? terminalInput(); const abort = new AbortController();
   const cancel = () => abort.abort(); input.rl.on('SIGINT', cancel); input.rl.on('close', cancel);
   try { await loginFlow(registry, { select: input.select, ask: (label, secret, signal) => input.ask(label, secret, AbortSignal.any([abort.signal, ...(signal ? [signal] : [])])), print, menu }, provider, type, readSettings(home).openBrowser, undefined, abort.signal); }
@@ -249,7 +260,7 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
     else if (action === 'skills') await skillsMenu(home, menuIO);
     else if (action === 'model favorites') await favoritesMenu(registry, menuIO);
     else if (action === 'local/custom endpoint') await endpointMenu(registry, menuIO, disconnectEndpoint);
-    else if (action === 'connection diagnostics') await diagnosticsMenu(registry, menuIO);
+    else if (action === 'connection diagnostics') await diagnosticsMenu(registry, menuIO, engine.web);
     else if (action === 'save participants') { saveParticipants(); print('Startup participants saved.'); }
     else if (action === 'folder access') {
       const access = await choose(menuIO, `Replace host roots for ${engine.session().projectRoot ?? engine.session().workspace}`, ['none', 'read', 'edit'] as const, v => v);
@@ -265,7 +276,7 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
   ui.attach(input.legacyReadline);
   engine.on('activity', transcript(engine));
   const refresh = ui instanceof InkTerminal ? setInterval(() => {
-    if (ui instanceof InkTerminal) ui.summary(engine.session(), engine.agents(), repo.list<{ state: string }>('task', sessionId).filter(t => !['done', 'cancelled'].includes(t.state)).length, repo.deliveries(sessionId, ['inflight']).map(d => d.agentId));
+    if (ui instanceof InkTerminal) ui.summary(engine.session(), engine.agents(), repo.list<{ state: string }>('task', sessionId).filter(t => !['done', 'cancelled'].includes(t.state)).length, repo.deliveries(sessionId, ['inflight']).map(d => d.agentId), workBoard(engine));
   }, 500) : undefined;
   refresh?.unref();
   let pasted: string[] | undefined;
@@ -281,7 +292,7 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
   try {
     if (inspectOnly && engine.session().state === 'active') await engine.pause('Opened for inspection. Use /resume to connect and continue.');
     repo.event(sessionId, 'human_session_opened', {});
-    ui.banner(projectFolder ?? process.cwd(), home); ui.session(engine.session());
+    ui.banner(projectFolder ?? engine.session().projectRoot ?? process.cwd(), home); ui.session(engine.session());
     const initial = engine.session();
     if ((new ProjectProfiles(home, projectRoot).read()?.instructions || initial.importedProjectInstructions) && !initial.projectInstructions) print('Saved project instructions are available. /project lets you inspect and apply their snapshot.');
     if (!ui.compact) print(`Session limits: tokens ${initial.limits.tokens ?? 'off'}, estimated cost $${initial.limits.dollars}, requests ${initial.limits.requests}, tools ${initial.limits.toolCalls}. /budget shows all limits.`);
@@ -361,6 +372,40 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
           try { await sendHuman(line); } catch (error) { repo.put('draft', { id: sessionId, sessionId, body: redact(line) } as { id: string; sessionId: string }); throw new Error(`${String(error)}. Message retained in /draft.`); } continue;
         }
         switch (command) {
+          case '/work': {
+            if (!rest) throw new Error('Use /work <concrete project brief>');
+            const check = await input.ask('Exact project check command (runs in the isolated worktree)');
+            if (!check.trim()) throw new Error('A named check is required');
+            const mode = await choose(menuIO, 'Check execution', ['Cancel', 'Isolated Linux copy', 'Approved host check'], v => v);
+            if (mode === 'Cancel') break;
+            const delivery = await choose(menuIO, 'Delivery mode', ['Collaborative team', 'Editor with peer review', 'Solo editor'], v => v);
+            ui.menu('Work to authorize', [rest, 'Project: ' + (engine.session().projectRoot ?? engine.session().workspace), 'Check: ' + check, mode === 'Approved host check' ? 'This exact check may rerun for 30 minutes with OS user privileges. Code under test is not sandboxed.' : 'Linux commands run in a filtered, offline copy.', delivery + '; changes remain held for integration.']);
+            if (await choose(menuIO, 'Start this work item?', ['Cancel', 'Start'], v => v) !== 'Start') break;
+            const task = await startCodeWork(engine, { title: rest, collaborative: delivery === 'Collaborative team', checks: [{ name: 'tests', command: check, mode: mode === 'Approved host check' ? 'host' : 'sandbox' }], approveHostChecks: mode === 'Approved host check', ...(delivery === 'Solo editor' ? { reviewerIds: [] } : {}) });
+            ui.menu('Work assigned', [task.id, ...workBoard(engine)]); break;
+          }
+          case '/plan': ui.menu('Work plan', workBoard(engine).length ? workBoard(engine) : ['No coordinated work yet. /work <brief> starts an isolated coding task.']); break;
+          case '/team': ui.menu('Team collaboration', collaborationView(engine, rest)); break;
+          case '/judgment': print(rest === 'off' ? configureRelevance(home, { enabled: false }) : { config: readRelevanceConfig(home) ?? 'disabled', note: 'New work only. Configure with roundtable judgment configure <json-file>. Enabled backends receive bounded file excerpts; originals remain accessible.' }); break;
+          case '/renew-work': {
+            const task = codeTask(engine, rest);
+            ui.menu('Renew work checks', [task.title, 'Project: ' + engine.session().projectRoot, ...task.code.checks.map(c => `${c.name} (${c.mode}): ${c.command}`), 'Renewal lasts 30 minutes. Host checks run with OS user privileges; scope and commands stay the same.']);
+            if (await choose(menuIO, 'Renew these exact checks?', ['Cancel', 'Renew'], v => v) === 'Renew') await renewCodeWork(engine, rest, true);
+            break;
+          }
+          case '/rework': {
+            const taskId = words[0]; if (!taskId || words.length < 2) throw new Error('Use /rework <task-id> <concrete reason>');
+            reworkCodeWork(engine, taskId, words.slice(1).join(' ')); ui.menu('Rework assigned', workBoard(engine)); break;
+          }
+          case '/work-diff': {
+            const rows = await codeDiff(engine, rest); if (ui instanceof InkTerminal) ui.review('Checked changes', rows); else ui.menu('Checked changes', rows); break;
+          }
+          case '/integrate': {
+            const rows = await codeDiff(engine, rest); if (ui instanceof InkTerminal) ui.review('Changes to integrate', rows); else ui.menu('Changes to integrate', rows);
+            if (await choose(menuIO, 'Apply these checked files to the project? Existing edits are hash-guarded; no commit or push.', ['Cancel', 'Apply'], v => v) === 'Apply') {
+              await engine.pause('Integrating reviewed work'); await engine.idle(); const group = await integrateCodeWork(engine, rest); ui.menu('Integrated', [group.changes.length + ' files applied with checkpoints.', '/changes shows the receipts; Git changes remain uncommitted.']);
+            } break;
+          }
           case '/change-group': {
             if (!words[0]) ui.menu('Change groups', repo.list<ChangeGroup>('changegroup', sessionId).map(g => g.id + ' / ' + g.state + ' / ' + g.title));
             else if (words[0] === 'sandbox') { const group = sandboxChanges(engine, words[1]!); print('Proposed ' + group.changes.length + ' files. /change-group review ' + group.id); }
@@ -410,6 +455,8 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
             }
             const contract = requireValidation(engine, spec); ui.menu('Required check saved', [contract.description, 'Artifact: ' + contract.artifactName, 'Check: ' + contract.id, '/check ' + contract.id + ' <artifact-id>']); break;
           }
+          case '/drop-evidence': { engine.web.verification.drop(words[0]!, words.slice(1).join(' ')); print('Evidence criteria removed with an audit record.'); break; }
+          case '/require-evidence': { const contract = engine.web.verification.require(JSON.parse(readFileSync(resolve(rest.replace(/^"(.*)"$/, '$1')), 'utf8'))); ui.menu('Protected evidence criteria saved', [contract.description, 'Contract: ' + contract.id]); break; }
           case '/check': { const result = await validateContract(engine, words[0]!, words[1]!, 'human'); ui.menu(result.passed ? 'Validation passed' : 'Validation failed', [result.detail, 'Artifact SHA-256: ' + result.hash]); break; }
           case '/drop-check': {
             const contract = repo.get<Contract>('contract', words[0]!); const reason = words.slice(1).join(' ');
@@ -554,7 +601,7 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
           case '/commands': print('Use /commands <search> or / to open the picker.'); break;
           case '/favorites': await favoritesMenu(registry, menuIO); break;
           case '/endpoints': await endpointMenu(registry, menuIO, disconnectEndpoint); break;
-          case '/diagnostics': await diagnosticsMenu(registry, menuIO); break;
+          case '/diagnostics': if (rest.trim() === 'web') await webDiagnosticsMenu(engine.web, menuIO); else await diagnosticsMenu(registry, menuIO, engine.web); break;
           case '/model': await changeModel(rest); break;
           case '/login': await login(registry, words[0], words[1], input); break;
           case '/logout': {
@@ -727,6 +774,13 @@ async function main(): Promise<void> {
     args.splice(configIndex, 2);
   }
   const [command, subcommand] = args;
+  if (command === 'judgment') {
+    if (subcommand === 'off') print(configureRelevance(home, { enabled: false }));
+    else if (subcommand === 'configure' && args[2]) print(configureRelevance(home, JSON.parse(readFileSync(resolve(args[2]), 'utf8'))));
+    else if (!subcommand || subcommand === 'status') print({ config: readRelevanceConfig(home) ?? 'disabled', scope: 'New work items only. File excerpts go to the selected backend; original candidates remain accessible.' });
+    else throw new Error('Use judgment status | off | configure <json-file>');
+    return;
+  }
   if (command === '--version' || command === '-v') { stdout.write(VERSION + '\n'); return; }
   if (command === '--help' || command === '-h') { print(help); return; }
   if (command === 'workflows') { print(workflows()); return; }
@@ -829,6 +883,7 @@ async function main(): Promise<void> {
     }
     if (command === 'setup') {
       if (!stdin.isTTY) throw new Error('Guided setup needs an interactive terminal. Use --agents for scripted configuration.');
+      if (ui instanceof InkTerminal) ui.banner(process.cwd(), home);
       await guidedSetup(registry); return;
     }
     if (command === 'doctor') { print({ version: VERSION, node: process.version, home, sqlite: 'connected', piSdk: '1.1.0', providerCount: registry.providers().length, connections: connectionReport(registry), liveInference: 'not checked; use roundtable diagnostics for an explicit compatibility test', container: process.env.ROUNDTABLE_CONTAINER_IMAGE ? 'configured, unverified' : 'disabled', telemetry: 'no adapter installed' }); return; }

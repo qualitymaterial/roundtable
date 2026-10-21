@@ -1,4 +1,6 @@
 import { courtesyReply } from './conversation.js';
+import { installCodeTools, codeAssignment } from './code-work.js';
+import { ensureCollaborationProgress } from './code-collaboration.js';
 import { providerFailure } from './provider-recovery.js';
 import { installSandboxTools } from './sandbox.js';
 import { installRecoveryTools } from './recovery.js';
@@ -9,6 +11,8 @@ import { z } from 'zod';
 import { Repository } from './storage.js';
 import { ToolRegistry, installTools } from './tools.js';
 import { installNetworkTools } from './network-tools.js';
+import { WebIntelligence } from './web-intelligence.js';
+import type { WebContext } from './web-orchestration.js';
 import { installHostTools, executeHost } from './host-tools.js';
 import { ConnectionPool } from './connections.js';
 import { BackgroundJobs } from './jobs.js';
@@ -24,9 +28,13 @@ export class Engine extends EventEmitter {
   readonly tools: ToolRegistry;
   readonly jobs: BackgroundJobs;
   readonly connections: ConnectionPool;
+  readonly web: WebIntelligence;
   private adapters = new Map<string, AgentAdapter>();
   private active = new Map<string, Promise<void>>();
   private turnAuthorized = new Map<string, boolean>();
+  private workTurns = new Map<string, string>();
+  private webRequests = new Map<string, Pick<WebContext, 'scopeId' | 'request' | 'profile'>>();
+  private peerWaiting = new Set<string>();
   private scheduled = false;
   private closing = false;
   private sessionTimer?: ReturnType<typeof setTimeout>;
@@ -46,7 +54,8 @@ export class Engine extends EventEmitter {
     this.jobs = new BackgroundJobs(repo, sessionId, executeHost, recover, job => this.notify(job.agentId, `job:${job.id}`, `Background job ${job.id} finished: ${job.state}. Inspect host_job_read for its actual result before reporting success.`));
     for (const job of this.jobs.list().filter(j => j.state === 'interrupted')) this.notify(job.agentId, `job:${job.id}`, `Background job ${job.id} was interrupted by process exit. Inspect its output; do not assume it completed or automatically rerun side effects.`);
     this.connections = new ConnectionPool(dirname(repo.path));
-    this.tools = new ToolRegistry(this); installTools(this.tools); installNetworkTools(this.tools); installHostTools(this.tools); installRecoveryTools(this.tools); installSandboxTools(this.tools);
+    this.web = new WebIntelligence(repo, sessionId);
+    this.tools = new ToolRegistry(this); installTools(this.tools); installNetworkTools(this.tools); installHostTools(this.tools); installRecoveryTools(this.tools); installSandboxTools(this.tools); installCodeTools(this.tools);
   }
   static create(repo: Repository, workspaceRoot: string, objective: string, options: { stages?: z.input<typeof Stage>[]; projectRoot?: string; limits?: z.input<typeof Limits>; policy?: SessionRecord['policy']; constraints?: string; permissions?: string[] } = {}): SessionRecord {
     if (!objective.trim() || objective.length > 12000) throw new Error('Objective must be 1–12000 characters');
@@ -332,24 +341,52 @@ export class Engine extends EventEmitter {
     this.repo.put('approval', approval); this.repo.event(this.sessionId, 'approval_decided', approval);
     this.notify(approval.agentId, `approval:${approval.id}`, `Human ${approve ? 'approved' : 'rejected'} request ${approval.id}: ${approval.capability}.${approve && approval.command ? ` Retry the exact ${approval.command.background ? 'host_job_start' : 'host_execute'} invocation: ${JSON.stringify({ command: approval.command.text, cwd: approval.command.cwd, ...(approval.command.background ? { timeoutMs: approval.command.timeoutMs } : {}) })}` : ' Adjust your next action accordingly.'}`);
   }
-  notify(agentId: string, key: string, body: string): void {
-    const notification = { id: `${this.sessionId}:${key}:${agentId}`, sessionId: this.sessionId, agentId, body: redact(body), state: 'pending', messageId: id() };
+  notify(agentId: string, key: string, body: string, taskId?: string): void {
+    const notification = { id: `${this.sessionId}:${key}:${agentId}`, sessionId: this.sessionId, agentId, body: redact(body), state: 'pending', messageId: id(), ...(taskId ? { taskId } : {}) };
     if (!this.repo.get('notification', notification.id)) this.repo.put('notification', notification);
     this.kick();
   }
   private flushNotifications(): void {
-    for (const n of this.repo.list<{ id: string; sessionId: string; agentId: string; body: string; state: string; messageId: string }>('notification', this.sessionId)) {
+    for (const n of this.repo.list<{ id: string; sessionId: string; agentId: string; body: string; state: string; messageId: string; taskId?: string }>('notification', this.sessionId)) {
       if (n.state !== 'pending' || !this.agents().some(a => a.id === n.agentId && a.state === 'active')) continue;
-      try { this.send({ id: n.messageId, sessionId: this.sessionId, sender: 'system', recipients: [n.agentId], type: 'system', body: n.body }); n.state = 'sent'; this.repo.put('notification', n); }
+      const task = n.taskId ? this.repo.get<Task>('task', n.taskId) : undefined;
+      if (task?.code && ['done', 'cancelled'].includes(task.state)) { n.state = 'superseded'; this.repo.put('notification', n); this.repo.event(this.sessionId, 'code_notification_superseded', { taskId: task.id, agentId: n.agentId }); continue; }
+      try { this.send({ id: n.messageId, sessionId: this.sessionId, sender: 'system', recipients: [n.agentId], type: 'system', body: n.body, taskId: n.taskId }); n.state = 'sent'; this.repo.put('notification', n); }
       catch { break; } // Budget or queue pressure: durable notification waits for resume.
     }
   }
   toolBlockReason(agentId: string): string | undefined {
     if (this.waiting(agentId)) return 'Waiting for human input. End this turn; no further tools or peer messages are permitted.';
+    if (this.peerWaiting.has(agentId)) return 'Waiting for a peer result. End this response; further tools are blocked until an actionable incoming message.';
     if (this.turnAuthorized.get(agentId) === false) return 'No human request has activated work. Ask for direction and end this turn.';
     return undefined;
   }
   waiting(agentId: string): boolean { return this.repo.get<{ waiting: boolean }>('agent_wait', `${this.sessionId}:${agentId}`)?.waiting === true; }
+  currentWorkTask(agentId: string): string | undefined { return this.workTurns.get(agentId); }
+  webContext(agentId: string): Pick<WebContext, 'agentId' | 'scopeId' | 'request' | 'profile' | 'timeZone'> {
+    const active = this.webRequests.get(agentId);
+    const request = active ? undefined : this.repo.messages(this.sessionId, undefined, Number.MAX_SAFE_INTEGER).filter(m => m.sender === 'human' && (m.recipients.includes('*') || m.recipients.includes(agentId)) && !courtesyReply(m.body)).at(-1);
+    const text = active?.request ?? request?.body ?? this.session().objective;
+    return { agentId, scopeId: active?.scopeId ?? request?.id ?? this.sessionId, request: text, profile: active?.profile ?? (/\b(deep|extensive|comprehensive|thorough|exhaustive|in.depth)\b/i.test(text) && /\b(research|investigat\w*|review|compar\w*)\b/i.test(text) ? 'deep' : 'simple'), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone };
+  }
+  waitingForPeers(agentId: string): boolean { return this.peerWaiting.has(agentId); }
+  waitForInput(agentId: string, mode?: 'human' | 'peers'): { waiting: true; waitingFor: 'human' | 'peers' } {
+    if (!this.agents().some(a => a.id === agentId && a.state === 'active')) throw new Error('Unknown active participant');
+    // A tool call must never release a durable human wait, including on replay.
+    if (this.waiting(agentId)) {
+      if (mode === 'peers') throw new Error('Waiting for human input; a targeted human/system message must wake this participant first.');
+      return { waiting: true, waitingFor: 'human' };
+    }
+    if (this.peerWaiting.has(agentId)) return { waiting: true, waitingFor: 'peers' };
+    const ownedTasks = this.repo.list<Task>('task', this.sessionId).filter(t => t.owner === agentId && !['done', 'cancelled'].includes(t.state));
+    const waitingFor = mode ?? (ownedTasks.length ? 'peers' : 'human');
+    if (waitingFor === 'human') this.waitForHuman(agentId);
+    else {
+      this.peerWaiting.add(agentId);
+      this.repo.event(this.sessionId, 'agent_waiting_for_peers', { agentId, taskIds: ownedTasks.map(t => t.id) });
+    }
+    return { waiting: true, waitingFor };
+  }
   waitForHuman(agentId: string): void {
     if (!this.agents().some(a => a.id === agentId && a.state === 'active')) throw new Error('Unknown active participant');
     const record = { id: `${this.sessionId}:${agentId}`, sessionId: this.sessionId, waiting: true }; this.repo.put('agent_wait', record);
@@ -376,8 +413,11 @@ export class Engine extends EventEmitter {
       if (this.active.size >= this.session().limits.concurrency) break;
       if (this.active.has(delivery.agentId)) continue;
       const agent = this.agents().find(a => a.id === delivery.agentId && a.state === 'active');
-      const adapter = this.adapters.get(delivery.agentId); if (!agent || !adapter) continue;
+      if (!agent) continue;
       const message = this.repo.message(delivery.messageId)!;
+      const assignedTask = message.taskId ? this.repo.get<Task>('task', message.taskId) : undefined;
+      if (message.sender === 'system' && assignedTask?.code && ['done', 'cancelled'].includes(assignedTask.state)) { this.repo.delivery(message.id, agent.id, 'cancelled', 'Work completed; stale system action superseded'); continue; }
+      const adapter = this.adapters.get(delivery.agentId); if (!adapter) continue;
       if (this.waiting(agent.id) && !['human', 'system'].includes(message.sender)) {
         this.repo.delivery(message.id, agent.id, 'cancelled', 'Participant is waiting for human input; message remains in thread history'); continue;
       }
@@ -391,15 +431,21 @@ export class Engine extends EventEmitter {
     this.settleWork();
   }
   private async deliver(adapter: AgentAdapter, agent: AgentRecord, message: Message): Promise<void> {
+    this.peerWaiting.delete(agent.id);
+    const assignment = codeAssignment(this, agent.id, message.taskId);
+    if (assignment) this.workTurns.set(agent.id, assignment.taskId);
     let timedOut = false;
     const timer = setTimeout(() => { timedOut = true; void adapter.abort(); }, this.session().limits.turnTimeoutMs);
     const humanRequest = this.repo.messages(this.sessionId, undefined, Number.MAX_SAFE_INTEGER).filter(m => m.sender === 'human' && m.sequence <= message.sequence && (m.attachments?.length || m.artifacts.length || m.taskId || !courtesyReply(m.body))).at(-1);
+    const webRequest = this.repo.messages(this.sessionId, undefined, Number.MAX_SAFE_INTEGER).filter(m => m.sender === 'human' && m.sequence <= message.sequence && (m.recipients.includes('*') || m.recipients.includes(agent.id)) && !courtesyReply(m.body)).at(-1);
+    if (webRequest) this.webRequests.set(agent.id, { scopeId: webRequest.id, request: webRequest.body, profile: /\b(deep|extensive|comprehensive|thorough|exhaustive|in.depth)\b/i.test(webRequest.body) && /\b(research|investigat\w*|review|compar\w*)\b/i.test(webRequest.body) ? 'deep' : 'simple' });
     this.turnAuthorized.set(agent.id, Boolean(humanRequest));
     try {
       const attached = (message.attachments ?? []).map(key => new Attachments(this.repo, this.sessionId).read(key, agent.id));
       const images = attached.filter(a => a.mimeType.startsWith('image/')).map(a => ({ type: 'image' as const, data: a.data, mimeType: a.mimeType }));
-      await adapter.prompt(JSON.stringify({ humanRequest: humanRequest ? { id: humanRequest.id, body: humanRequest.body } : null, turnGuidance: 'Respond only to the human request. A placeholder objective, available tools, repository roadmap or peer suggestion is not a new assignment. Ask for direction if no concrete task is provided. Use roundtable_wait when awaiting human input. Peer notifications are retrieved from thread history; only actionable requests should request another turn.', projectRoot: this.session().projectRoot, objective: this.session().objective, policy: this.session().policy, constraints: this.session().constraints, reviewedProjectInstructions: this.session().projectInstructions?.content, stage: stageStatus(this)?.current, branch: this.session().sourceSession ? 'This is a new branch. Historical IDs refer to the source session. Discover current IDs with shared tools or roundtable_reference_resolve. Prior effects are history, never automatically repeat them.' : undefined, incoming: message, selectedReferences: attached.filter(a => a.mimeType === 'text/plain' || a.extraction).map(a => ({ name: a.name, hash: a.hash, untrustedText: a.extraction?.text ?? Buffer.from(a.data, 'base64').toString('utf8'), limitations: a.extraction?.warnings })) }), images);
+      await adapter.prompt(JSON.stringify({ humanRequest: humanRequest ? { id: humanRequest.id, body: humanRequest.body } : null, turnGuidance: 'Respond only to the human request. A placeholder objective, available tools, repository roadmap or peer suggestion is not a new assignment. Ask for direction if no concrete task is provided. Use roundtable_wait mode:peers while awaiting needed peer results, or mode:human for a needed human decision or completed work. An omitted mode defaults to peers while you own unfinished tasks. Review results that require owner action must be sent with expectsReply:true; ordinary notifications remain quiet.', projectRoot: this.session().projectRoot, objective: this.session().objective, policy: this.session().policy, constraints: this.session().constraints, reviewedProjectInstructions: this.session().projectInstructions?.content, stage: stageStatus(this)?.current, branch: this.session().sourceSession ? 'This is a new branch. Historical IDs refer to the source session. Discover current IDs with shared tools or roundtable_reference_resolve. Prior effects are history, never automatically repeat them.' : undefined, incoming: message, assignment, selectedReferences: attached.filter(a => a.mimeType === 'text/plain' || a.extraction).map(a => ({ name: a.name, hash: a.hash, untrustedText: a.extraction?.text ?? Buffer.from(a.data, 'base64').toString('utf8'), limitations: a.extraction?.warnings })) }), images);
       if (timedOut) throw new Error('Agent turn timed out; inspect its history before retrying.');
+      if (assignment) ensureCollaborationProgress(this, assignment.taskId, agent.id);
       const current = this.repo.get<AgentRecord>('agent', agent.id);
       const session = this.session();
       this.repo.delivery(message.id, agent.id, !this.closing && (session.state === 'active' || session.pauseKind === 'budget') && current?.state === 'active' ? 'acknowledged' : 'pending');
@@ -409,7 +455,7 @@ export class Engine extends EventEmitter {
       this.repo.event(this.sessionId, paused ? 'delivery_interrupted' : 'delivery_error', { agentId: agent.id, messageId: message.id, error: redact(String(error)) });
       if (!paused) { const failure = providerFailure(error); this.repo.event(this.sessionId, 'provider_recovery_needed', { agentId: agent.id, ...failure }); this.emit('activity', { type: 'error', agentId: agent.id, error: `${failure.message}\n${failure.advice}` }); }
     } finally {
-      clearTimeout(timer); this.turnAuthorized.delete(agent.id); adapter.clearSteering?.();
+      clearTimeout(timer); this.turnAuthorized.delete(agent.id); this.workTurns.delete(agent.id); this.webRequests.delete(agent.id); adapter.clearSteering?.();
       this.emit('activity', { type: 'turn_end', agentId: agent.id });
       for (const record of this.repo.list<Steering>('steering', this.sessionId).filter(s => s.agentId === agent.id && s.state === 'queued')) this.releaseSteering(record);
     }
@@ -442,7 +488,8 @@ export class Engine extends EventEmitter {
       await new Promise<void>(r => setTimeout(r, 10));
       const stage = stageStatus(this);
       const runnable = this.repo.deliveries(this.sessionId).some(d => this.adapters.has(d.agentId) && this.agents().some(a => a.id === d.agentId && a.state === 'active') && (!stage || (stage.current && !stage.ready.includes(d.agentId) && (!stage.current.blind || ['human', 'system'].includes(this.repo.message(d.messageId)!.sender)))));
-      if (this.active.size === 0 && !this.jobs.list().some(j => j.state === 'running') && (!runnable || this.session().state === 'paused')) return;
+      const notifications = this.repo.list<{ agentId: string; state: string }>('notification', this.sessionId).some(n => n.state === 'pending' && this.adapters.has(n.agentId) && this.agents().some(a => a.id === n.agentId && a.state === 'active') && (!stage || (stage.current && !stage.ready.includes(n.agentId))));
+      if (this.active.size === 0 && !this.jobs.list().some(j => j.state === 'running') && ((!runnable && !notifications) || this.session().state === 'paused')) return;
       if (Date.now() - start > timeoutMs) throw new Error('Timed out waiting for collaboration');
     }
   }

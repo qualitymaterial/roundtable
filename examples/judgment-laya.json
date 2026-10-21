@@ -1,0 +1,8 @@
+{
+  "backend": "laya",
+  "model": "multilingual",
+  "url": "http://127.0.0.1:8000/v1/systemone",
+  "excerptChars": 1600,
+  "timeoutMs": 45000,
+  "maxFileRequests": 60
+}

@@ -1240,6 +1240,16 @@
     ]
   },
   {
+    "name": "entities",
+    "version": "8.1.0",
+    "license": "BSD-2-Clause",
+    "development": false,
+    "path": "node_modules/entities",
+    "notices": [
+      "LICENSE"
+    ]
+  },
+  {
     "name": "environment",
     "version": "1.1.0",
     "license": "MIT",
@@ -2130,6 +2140,16 @@
     "path": "node_modules/parent-module",
     "notices": [
       "license"
+    ]
+  },
+  {
+    "name": "parse5",
+    "version": "8.0.1",
+    "license": "MIT",
+    "development": false,
+    "path": "node_modules/parse5",
+    "notices": [
+      "LICENSE"
     ]
   },
   {

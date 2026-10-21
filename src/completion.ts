@@ -1,3 +1,4 @@
+import { taskEvidenceStatus } from './verification-gate.js';
 import { activeSandboxRuns } from './sandbox.js';
 import { taskValidation, recoveryReport } from './recovery.js';
 import { stageStatus } from './policy.js';
@@ -12,11 +13,14 @@ export function completionReport(engine: Engine) {
   const approvals = repo.list<Approval>('approval', sessionId).filter(a => a.state === 'pending');
   const artifacts = repo.list<Artifact>('artifact', sessionId).map(({ id, name, hash, author }) => ({ id, name, hash, author }));
   const events = repo.events(sessionId);
-  const checks = events.filter(e => ['independent_artifact_validation', 'collaboration_acceptance'].includes(String(e.type))).map(e => ({ type: e.type, timestamp: e.timestamp, data: e.data }));
+  const checks = events.filter(e => ['independent_artifact_validation', 'collaboration_acceptance', 'evidence_verification'].includes(String(e.type))).map(e => ({ type: e.type, timestamp: e.timestamp, data: e.data }));
   const waived = new Set(events.filter(e => e.type === 'human_failure_resolution').map(e => (e.data as { failureId: string }).failureId));
+  const evidenceFailures = tasks.filter(t => t.state !== 'cancelled').flatMap(t => { const contracts = engine.web.verification.contracts(t.id); const check = taskEvidenceStatus(engine, t); return (t.state === 'done' || contracts.length) && !check.passed ? [{ id: 'evidence:' + t.id, kind: 'required evidence', detail: t.title + ': ' + check.detail }] : []; });
   const validationFailures = tasks.filter(t => t.state !== 'cancelled').flatMap(t => taskValidation(engine, t.id).filter(c => !c.passed).map(c => ({ id: `validation:${c.contract.id}`, kind: 'required validation', detail: `${t.title}: ${c.contract.description}. ${c.detail}` })));
   const sandboxFailures = events.filter(e => e.type === 'sandbox_started').flatMap(e => {
     const runId = (e.data as { runId: string }).runId; if (activeSandboxRuns.has(runId)) return [];
+    const repaired = tasks.some(t => t.code?.runs.some((r, index, runs) => r.sandboxRunId === runId && runs.slice(index + 1).some(next => next.name === r.name && next.exitCode === 0) && runs.findLast(next => next.name === r.name)?.exitCode === 0));
+    if (repaired) return [];
     const done = events.findLast(e => e.type === 'sandbox_finished' && (e.data as { runId: string }).runId === runId);
     return done && (done.data as { exitCode: number }).exitCode === 0 ? [] : [{ id: 'sandbox:' + runId, kind: 'sandbox', detail: done ? 'Isolated command returned a failure exit code; inspect its output.' : 'Isolated execution was interrupted or failed; inspect its audit record.' }];
   });
@@ -25,17 +29,17 @@ export function completionReport(engine: Engine) {
     ...repo.list<{ id: string; state: string; name: string }>('operation', sessionId).filter(o => o.state === 'prepared' && !engine.tools.isExecuting(o.id)).map(o => ({ id: `operation:${o.id}`, kind: 'unknown outcome', detail: `${o.name}: execution was interrupted before its receipt was committed. Inspect effects before allowing new work.` })),
     ...engine.jobs.list().filter(j => ['failed', 'cancelled', 'interrupted'].includes(j.state)).map(j => ({ id: `job:${j.id}`, kind: 'job', detail: `${j.state}: ${j.command}` })),
     ...events.filter(e => e.type === 'tool_result' && (e.data as { result?: { ok?: boolean } }).result?.ok === false).map(e => ({ id: `tool:${e.id}`, kind: 'tool', detail: JSON.stringify(e.data) })),
-  ].filter(f => !waived.has(f.id)).concat(validationFailures);
+  ].filter(f => !waived.has(f.id)).concat(validationFailures, evidenceFailures);
   const outstanding = tasks.filter(t => t.state !== 'done' && t.state !== 'cancelled');
   const jobs = engine.jobs.list().map(job => ({ ...job, output: undefined, result: undefined }));
   const stage = stageStatus(engine);
   const state = running || jobs.some(j => j.state === 'running') ? 'working' : failures.length ? 'needs review' : session.state === 'paused' ? 'paused' : approvals.length ? 'waiting for approval' : deliveries.some(d => d.state === 'failed') ? 'needs retry' : deliveries.length ? 'waiting for participants' : outstanding.length ? 'idle with open tasks' : stage?.current ? 'waiting for stage approval' : 'idle';
-  return { state, stage, recovery: recoveryReport(engine), acceptance: session.completion ? 'human accepted' : 'not accepted', failures, objective: session.objective, reason: session.reason, completedTasks: tasks.filter(t => t.state === 'done'), outstandingTasks: outstanding, artifacts, approvals, deliveries, jobs, checks, completion: session.completion ?? null, note: 'Idle is not proof of success. Checks apply only to the artifacts and versions they validated.' };
+  return { state, stage, recovery: recoveryReport(engine), acceptance: session.completion ? 'human accepted' : 'not accepted', failures, objective: session.objective, reason: session.reason, completedTasks: tasks.filter(t => t.state === 'done' && taskEvidenceStatus(engine, t).passed), outstandingTasks: outstanding, artifacts, approvals, deliveries, jobs, checks, completion: session.completion ?? null, note: 'Idle is not proof of success. Checks apply only to the artifacts and versions they validated.' };
 }
 
 export function resolveFailure(engine: Engine, failureId: string, reason: string): void {
   if (!reason.trim() || reason.length > 2000) throw new Error('Provide a resolution or waiver reason (1–2000 characters).');
-  if (failureId.startsWith('validation:')) throw new Error('Required checks cannot be waived through failure resolution. Fix the artifact or explicitly remove the contract.');
+  if (failureId.startsWith('validation:') || failureId.startsWith('evidence:')) throw new Error('Required checks cannot be waived through failure resolution. Fix the artifact or explicitly remove the contract.');
   if (!completionReport(engine).failures.some(f => f.id === failureId)) throw new Error('Unknown unresolved failure');
   engine.repo.event(engine.sessionId, 'human_failure_resolution', { failureId, reason, by: 'human' });
 }

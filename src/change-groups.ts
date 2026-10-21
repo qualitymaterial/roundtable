@@ -106,16 +106,16 @@ export async function settleChanges(engine: Engine, key: string, action: 'accept
 export type Worktree = { id: string; sessionId: string; root: string; path: string; branch: string; reviewedHead?: string; reviewedBase?: string; suspended?: boolean };
 function git(engine: Engine, root: string, args: string[]): string {
   const hooks = join(dirname(engine.repo.path), 'empty-hooks'); mkdirSync(hooks, { recursive: true });
-  return execFileSync('git', ['-c', `core.hooksPath=${hooks}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=never', ...args], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
+  return execFileSync('git', ['-c', `safe.directory=${root.replaceAll('\\', '/')}`, '-c', `core.hooksPath=${hooks}`, '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=never', ...args], { cwd: root, encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 2 * 1024 * 1024, env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } }).trim();
 }
-export async function createWorktree(engine: Engine, branch: string): Promise<Worktree> {
-  if (engine.session().state !== 'paused') throw new Error('Pause before creating a worktree');
+export async function createWorktree(engine: Engine, branch: string, activeTask = false): Promise<Worktree> {
+  if (!activeTask && engine.session().state !== 'paused') throw new Error('Pause before creating a worktree');
   const root = await realpath(engine.session().projectRoot ?? engine.session().workspace);
   await hostPath(engine.session(), root, true);
   if (await realpath(git(engine, root, ['rev-parse', '--show-toplevel'])) !== root) throw new Error('Launch from the Git repository root');
   git(engine, root, ['check-ref-format', '--branch', branch]); if (branch.startsWith('-')) throw new Error('Invalid branch');
   const record: Worktree = { id: id(), sessionId: engine.sessionId, root, path: '', branch };
-  const parent = join(dirname(engine.repo.path), 'worktrees'); mkdirSync(parent, { recursive: true }); record.path = join(parent, record.id);
+  const parent = join(dirname(engine.repo.path), 'worktrees'); mkdirSync(parent, { recursive: true }); record.path = join(parent, record.id.replaceAll('-', '').slice(0, 16));
   git(engine, root, ['worktree', 'add', '-b', branch, record.path, 'HEAD']); engine.repo.put('worktree', record); engine.repo.event(engine.sessionId, 'human_worktree_created', record); return record;
 }
 export async function reviewWorktree(engine: Engine, key: string): Promise<string> {

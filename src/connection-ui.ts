@@ -4,6 +4,7 @@ import { searchChoose } from './navigation.js';
 import { EndpointConfig, EndpointModel, type ProviderRegistry } from './providers.js';
 import { Connections } from './connections.js';
 import { redact } from './domain.js';
+import type { WebIntelligence } from './web-intelligence.js';
 
 /** Explicit human endpoint inspection; no redirects, inference, or inherited credential discovery. */
 export async function discoverModels(baseUrl: string, apiKeyEnv?: string): Promise<string[]> {
@@ -80,9 +81,10 @@ export function connectionReport(registry: ProviderRegistry) {
     mcp: new Connections(registry.home).list().map(c => ({ id: c.id, transport: c.type, enabled: c.enabled, allowedTools: c.tools.length, authentication: c.type === 'http' && c.tokenEnv ? process.env[c.tokenEnv] ? 'environment variable set' : `missing ${c.tokenEnv}` : 'not checked', status: 'not connected; use /mcp manage to test' })),
   };
 }
-export async function diagnosticsMenu(registry: ProviderRegistry, io: MenuIO): Promise<void> {
+export async function diagnosticsMenu(registry: ProviderRegistry, io: MenuIO, web?: WebIntelligence): Promise<void> {
   const report = connectionReport(registry); const rows = [report.inference, '', ...report.providers.map(p => `${p.provider} · ${p.authentication} · ${p.models} models`), '', ...report.endpoints.map(e => `${e.provider} · ${e.server} · ${e.authentication} · ${e.protocol}`), '', ...report.mcp.map(c => `${c.id} · ${c.transport} · ${c.enabled ? 'enabled' : 'disabled'} · ${c.allowedTools} allowed tools · ${c.authentication}`)];
   if (io.menu) io.menu('Connections', rows); else io.print(rows.join('\n'));
+  if (web) { const lines = webDiagnosticsRows(web); if (io.menu) io.menu('Web Intelligence', lines); else io.print(lines.join('\n')); }
   if ((await io.ask('Run a model tool-compatibility test? Up to two metered requests, outside session budgets [y/N]')).toLowerCase() !== 'y') return;
   const model = await searchChoose(io, 'Configured models', registry.models().filter(m => registry.providers().some(p => p.id === m.provider && p.configured)), m => `${m.provider}/${m.id}`);
   if ((await io.ask(`Test ${model.provider}/${model.id}? [y/N]`)).toLowerCase() !== 'y') return;
@@ -90,4 +92,20 @@ export async function diagnosticsMenu(registry: ProviderRegistry, io: MenuIO): P
   try { await registry.validate(model.provider, model.id, () => { requests++; }, response => { tokens += response.usage.totalTokens; }); io.print('Passed: model returned a real tool call and read its result. This does not guarantee future quota.'); }
   catch (error) { io.print(`Compatibility test failed: ${redact(String(error))}. Check account access, exact model ID and tool support.`); }
   finally { io.print(`Diagnostics: ${requests} requests attempted; ${tokens} provider-reported tokens. Outside collaboration session budgets.`); }
+}
+export function webDiagnosticsRows(web: WebIntelligence): string[] {
+  const report = web.diagnostics();
+  return [`Successful searches: ${report.successfulSearches}; page reads: ${report.successfulReads}`, `Duplicate/reused calls: ${report.duplicateCalls}; cache hits: ${report.cacheHits}; suppressed retries: ${report.suppressedCalls}`, `Failed backend requests: ${report.failedBackendRequests}; failed tool calls: ${report.failedToolCalls}`, `Backend latency: ${report.providerLatency.averageMs.toFixed(1)} ms average / ${report.providerLatency.requests} attempts`, `Approximate configured cost: $${report.approximateCost.knownEstimate.toFixed(4)}; ${report.approximateCost.unknownCostRequests} requests with unknown cost; not an invoice`, ...report.scopes.map(s => `${s.scopeId} · ${s.profile} · searches ${s.searches}/${s.searchLimit} · reads ${s.reads}/${s.readLimit} · extensions ${s.extensions} · potential conflicts ${s.potentialConflicts}`), 'Use /diagnostics web to review and extend a task budget. Session/agent hard ceilings still apply.'];
+}
+export async function webDiagnosticsMenu(web: WebIntelligence, io: MenuIO): Promise<void> {
+  const rows = webDiagnosticsRows(web); if (io.menu) io.menu('Web Intelligence', rows); else io.print(rows.join('\n'));
+  const scopes = web.diagnostics().scopes; if (!scopes.length) return;
+  if ((await io.ask('Review an evidence-gap budget extension? [y/N]')).toLowerCase() !== 'y') return;
+  const scope = await choose(io, 'Research task', scopes, s => `${s.scopeId} (${s.profile}; searches ${s.searches}/${s.searchLimit}; reads ${s.reads}/${s.readLimit})`);
+  const additionalSearches = Number(await askValidated(io, 'Additional searches (0–20)', s => /^\d+$/.test(s) && Number(s) <= 20 ? undefined : 'Enter an integer from 0 to 20'));
+  const additionalReads = Number(await askValidated(io, 'Additional reads (0–40)', s => /^\d+$/.test(s) && Number(s) <= 40 ? undefined : 'Enter an integer from 0 to 40'));
+  const reason = await askValidated(io, 'Unresolved evidence gap', s => s.trim().length > 0 && s.length <= 500 ? undefined : 'Describe the gap in 1–500 characters');
+  if (additionalSearches + additionalReads === 0) { io.print('No budget extension requested.'); return; }
+  io.print(`Task ${scope.scopeId}: add ${additionalSearches} searches and ${additionalReads} reads. Reason: ${reason}. Session/agent ceilings, permissions and rate limits stay enforced.`);
+  if ((await io.ask('Approve this exact extension? [y/N]')).toLowerCase() === 'y') { web.approveBudgetExtension(scope.scopeId, additionalSearches, additionalReads, reason); io.print('Task budget extension recorded; no retrieval was executed or retried.'); }
 }

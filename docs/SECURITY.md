@@ -1,5 +1,11 @@
 # Security boundaries
 
+## Web Intelligence Phase 2 — 2026-10-20
+
+The new opt-in dotted web tools validate all DNS answers, pin a validated connection address and reject non-public/special-use addresses, URL credentials, nonstandard page ports and all redirects. No cookies, proxy environment, model credentials or JavaScript are used. A human may explicitly configure a private fixed search service; that exception never applies to model-selected page URLs. Legacy exact-origin tools and MCP retain their separately configured authority. See [WEB_INTELLIGENCE_PHASE_2.md](WEB_INTELLIGENCE_PHASE_2.md) for exact limits/configuration.
+
+Web snapshots are session/policy-bound, validated and hashed before cache delivery. Cache APIs are read-only. Budget reservations persist before backend dispatch; receipt replay rechecks authorization/freshness. Retrieved instructions remain data, not authority. Literal quote checks are not independent factual verification. Additional provider factories are trusted code with OS-user privileges; injected test transports are not model-selectable. These controls do not sandbox a remote MCP server or defend against an attacker controlling the runtime database/code.
+
 Pi is an in-process agent runtime, **not an OS sandbox**. Roundtable supplies an explicit resource loader and tool allowlist: no Pi host-shell/file tools, project instruction discovery, skills, automatic extensions, MCP config discovery or external application auth stores are loaded. Agents call wrappers that enforce authorization; prompts are not the permission boundary.
 
 ## Implemented controls

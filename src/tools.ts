@@ -1,5 +1,9 @@
+import { assertTaskEvidence, taskEvidenceStatus } from './verification-gate.js';
 import { researchConfig } from './research.js';
+import { WebError } from './web-types.js';
+import { assertWebAccess } from './web-tools.js';
 import { taskValidation } from './recovery.js';
+import { assertCodeComplete, workKey } from './code-work.js';
 import { Type, type Static, type TSchema } from 'typebox';
 import { Value } from 'typebox/value';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
@@ -29,13 +33,18 @@ export class ToolRegistry implements ToolExecutor {
   private entries = new Map<string, ToolSpec>();
   private pending = new Map<string, { fingerprint: string; promise: Promise<unknown> }>();
   constructor(readonly engine: Engine) {}
+  private webFailure(agentId: string, code: string): void {
+    this.engine.web.orchestration.metric('registry_error', { signal: new AbortController().signal, authorize: () => {}, ...this.engine.webContext(agentId) }, { code });
+  }
   register<T extends TSchema>(name: string, description: string, schema: T, permission: string, execute: (args: Static<T>, context: ToolContext) => Promise<unknown> | unknown, owner = 'roundtable'): void {
-    if (!/^[a-z][a-z0-9_]{2,80}$/.test(name) || this.entries.has(name)) throw new Error('Invalid or duplicate tool name');
+    if (!/^[a-z][a-z0-9_.]{2,80}$/.test(name) || this.entries.has(name) || [...this.entries.keys()].some(existing => this.wireName(existing) === this.wireName(name))) throw new Error('Invalid or duplicate tool name');
     this.entries.set(name, { name, description, inputSchema: schema, outputSchema: resultSchema, permission, version: '0.1.0', owner,
-      execute: async (args, context) => { if (!Value.Check(schema, args)) throw new Error('Invalid tool input'); return execute(args as Static<T>, context); } });
+      execute: async (args, context) => { if (!Value.Check(schema, args)) { if (name.startsWith('web.')) { this.webFailure(context.agent.id, 'invalid_input'); throw new WebError('invalid_input', 'Invalid web tool input'); } throw new Error('Invalid tool input'); } return execute(args as Static<T>, context); } });
   }
   remove(name: string): void { this.entries.delete(name); }
+  wireName(name: string): string { return name.replaceAll('.', '__'); }
   private configured(name: string): boolean {
+    if (name.startsWith('web.')) { try { return this.engine.web.config().enabled; } catch { return false; } }
     if (name.startsWith('container_')) return Boolean(process.env.ROUNDTABLE_CONTAINER_IMAGE);
     if (name === 'web_search') return Boolean(researchConfig(dirname(this.engine.repo.path)).searchUrl);
     if (name === 'web_fetch') return researchConfig(dirname(this.engine.repo.path)).fetchOrigins.length > 0;
@@ -44,10 +53,10 @@ export class ToolRegistry implements ToolExecutor {
     return true;
   }
   activeNames(agent: AgentRecord): string[] {
-    return [...this.entries.values()].filter(t => this.engine.authorized(agent, t.permission) && this.configured(t.name) && (!stageStatus(this.engine)?.current?.blind || blindAllowedTools.has(t.name))).map(t => t.name);
+    return [...this.entries.values()].filter(t => this.engine.authorized(agent, t.permission) && this.configured(t.name) && (!stageStatus(this.engine)?.current?.blind || blindAllowedTools.has(t.name))).map(t => this.wireName(t.name));
   }
   list(agent: AgentRecord): unknown[] {
-    return [...this.entries.values()].map(spec => ({ name: spec.name, description: spec.description, inputSchema: spec.inputSchema, outputSchema: spec.outputSchema, permission: spec.permission, version: spec.version, owner: spec.owner, availability: !this.configured(spec.name) ? 'unconfigured' : this.engine.authorized(agent, spec.permission) ? 'authorized' : 'approval-required', configured: this.configured(spec.name), health: 'not probed', executionStatus: 'idle' }));
+    return [...this.entries.values()].map(spec => ({ name: spec.name, wireName: this.wireName(spec.name), description: spec.description, inputSchema: spec.inputSchema, outputSchema: spec.outputSchema, permission: spec.permission, version: spec.version, owner: spec.owner, availability: !this.configured(spec.name) ? 'unconfigured' : this.engine.authorized(agent, spec.permission) ? 'authorized' : 'approval-required', configured: this.configured(spec.name), health: 'not probed', executionStatus: 'idle' }));
   }
   isExecuting(operationId: string): boolean { return this.pending.has(operationId); }
   names(): string[] { return [...this.entries.keys()]; }
@@ -63,16 +72,24 @@ export class ToolRegistry implements ToolExecutor {
     const tool = this.entries.get(name);
     const fingerprint = this.fingerprint(name, args);
     const blocked = this.engine.toolBlockReason(agent.id);
-    if (blocked && name !== 'roundtable_wait') return { ok: false, data: blocked };
+    if (blocked && name !== 'roundtable_wait') { if (name.startsWith('web.')) this.webFailure(agent.id, 'runtime_blocked'); return { ok: false, data: blocked }; }
+    if (name.startsWith('web.')) {
+      try { assertWebAccess(this, agent.id); }
+      catch (error) { const code = error instanceof WebError ? error.code : 'permission_denied'; this.webFailure(agent.id, code); return { ok: false, data: { code, message: 'Web access is unavailable under current runtime policy' } }; }
+    }
     const cached = this.engine.repo.cached(cacheId) as { fingerprint: string; result: unknown } | undefined;
     if (cached && tool && this.engine.authorized(agent, tool.permission)) {
       if (cached.fingerprint !== fingerprint) return { ok: false, data: 'Tool call ID collision' };
+      if (name.startsWith('web.')) {
+        try { this.engine.web.validateReplay(args, cached.result, { signal: signal ?? new AbortController().signal, authorize: () => assertWebAccess(this, agent.id), ...this.engine.webContext(agent.id) }); this.engine.web.orchestration.metric('reuse', { signal: signal ?? new AbortController().signal, authorize: () => {}, agentId: agent.id, ...this.engine.webContext(agent.id) }, { cache: false, receipt: true }); }
+        catch (error) { const code = error instanceof WebError ? error.code : 'source_unavailable'; this.webFailure(agent.id, code); return { ok: false, data: { code, message: 'Historical web receipt is unavailable; issue a new tool call ID' } }; }
+      }
       return cached.result;
     }
     const previous = this.engine.repo.get<{ fingerprint: string; state: string }>('operation', cacheId);
     if (previous) return { ok: false, data: previous.fingerprint !== fingerprint ? 'Tool call ID collision' : 'Previous invocation has an uncertain outcome. Inspect the operation and its effects before explicitly issuing a new call; it will not be replayed automatically.' };
     const context = { engine: this.engine, agent, signal: signal ?? new AbortController().signal };
-    this.engine.repo.event(agent.sessionId, 'tool_start', { agentId: agent.id, name, callId, input: args });
+    this.engine.repo.event(agent.sessionId, 'tool_start', { agentId: agent.id, name, callId, input: name.startsWith('web.') ? '[web input omitted]' : args });
     this.engine.emit('activity', { type: 'tool', agentId: agent.id, name });
     let result: unknown;
     try {
@@ -86,7 +103,7 @@ export class ToolRegistry implements ToolExecutor {
       this.engine.repo.put('operation', { id: cacheId, sessionId: agent.sessionId, fingerprint, state: 'prepared', agentId: agent.id, name, callId, at: timestamp() } as { id: string; sessionId: string });
       const data = await tool.execute(args, context);
       result = { ok: true, data: data ?? null };
-    } catch (error) { result = { ok: false, data: redact(error instanceof Error ? error.message : String(error)) }; }
+    } catch (error) { result = { ok: false, data: error instanceof WebError ? { code: error.code, message: redact(error.message), ...(error.feedback ? { feedback: error.feedback } : {}) } : redact(error instanceof Error ? error.message : String(error)) }; }
     result = JSON.parse(redact(JSON.stringify(result))) as unknown;
     this.engine.repo.transaction(() => {
       this.engine.repo.cache(cacheId, agent.sessionId, { fingerprint, result });
@@ -98,7 +115,7 @@ export class ToolRegistry implements ToolExecutor {
   }
   piTools(agent: AgentRecord): ToolDefinition[] {
     return [...this.entries.values()].map(tool => ({
-      name: tool.name, label: tool.name, description: tool.description, parameters: tool.inputSchema, outputSchema: tool.outputSchema,
+      name: this.wireName(tool.name), label: tool.name, description: tool.description, parameters: tool.inputSchema, outputSchema: tool.outputSchema,
       execute: async (callId, args, signal) => {
         const result = await this.execute(agent, tool.name, args, callId, signal);
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: result, structuredContent: result as JsonValue };
@@ -106,7 +123,9 @@ export class ToolRegistry implements ToolExecutor {
     }));
   }
   private fingerprint(name: string, args: unknown): string {
-    return createHash('sha256').update(JSON.stringify({ name, args, ...(['web_search', 'web_fetch'].includes(name) ? { research: researchConfig(dirname(this.engine.repo.path)) } : {}), ...(name.startsWith('host_') ? { hostAccess: this.engine.session().hostAccess ?? null } : {}), ...(name.startsWith('mcp_') ? { connections: new Connections(dirname(this.engine.repo.path)).list() } : {}), ...(name.startsWith('roundtable_skill') ? { skills: new Skills(dirname(this.engine.repo.path)).list().map(({ files, ...skill }) => ({ ...skill, files: files?.map(f => ({ path: f.path, hash: f.hash })) })) } : {}) })).digest('hex');
+    let web: string | undefined;
+    if (name.startsWith('web.')) { try { web = this.engine.web.identity(); } catch { web = 'invalid_configuration'; } }
+    return createHash('sha256').update(JSON.stringify({ name, args, ...(web ? { web } : {}), ...(['web_search', 'web_fetch'].includes(name) ? { research: researchConfig(dirname(this.engine.repo.path)) } : {}), ...(name.startsWith('host_') ? { hostAccess: this.engine.session().hostAccess ?? null } : {}), ...(name.startsWith('mcp_') ? { connections: new Connections(dirname(this.engine.repo.path)).list() } : {}), ...(name.startsWith('roundtable_skill') ? { skills: new Skills(dirname(this.engine.repo.path)).list().map(({ files, ...skill }) => ({ ...skill, files: files?.map(f => ({ path: f.path, hash: f.hash })) })) } : {}) })).digest('hex');
   }
 }
 
@@ -142,7 +161,7 @@ export function installTools(registry: ToolRegistry): void {
   };
   registry.register('roundtable_stage_ready', 'Declare your stage work finished after publishing required findings. Wait for human stage approval.', empty, 'collaborate', (_args, { agent }) => stageReady(engine, agent.id));
   registry.register('roundtable_stage_status', 'Inspect workflow stage and readiness barrier.', empty, 'collaborate', () => stageStatus(engine) ?? { mode: 'free collaboration' });
-  registry.register('roundtable_wait', 'Enter a durable waiting-for-human state. Stops peer-triggered work and further tool calls until a human message or system approval/result arrives. Finish your response after calling; do not use while awaiting a needed peer result.', empty, 'collaborate', (_args, { agent }) => { engine.waitForHuman(agent.id); return { waiting: true }; });
+  registry.register('roundtable_wait', 'End this response and wait without polling. mode:peers keeps you available for actionable peer results; use while awaiting reviews. mode:human durably blocks tools and peer work until targeted human/system input; use for a needed human decision or after completing your work. If mode is omitted, unfinished tasks you own select peers; otherwise human. Check waitingFor in the result.', Type.Object({ mode: Type.Optional(Type.Union([Type.Literal('human'), Type.Literal('peers')])) }), 'collaborate', ({ mode }, { agent }) => engine.waitForInput(agent.id, mode));
   registry.register('roundtable_agents_list', 'Discover session agents, models and permission scopes.', empty, 'collaborate', () => engine.agents().map(a => ({ ...a, waitingForHuman: engine.waiting(a.id) })));
   registry.register('roundtable_send', 'Store a peer notification without waking models by default. Set expectsReply:true only for a concrete question, delegated action or result that needs processing; task_request also wakes by default. Never request replies to thanks, acknowledgments or readiness updates. Use * for all other active agents.', Type.Object({ recipients: Type.Array(text(100), { minItems: 1, maxItems: 64 }), body: text(24000), expectsReply: Type.Optional(Type.Boolean()), type: Type.Optional(Type.Union(messageTypes.filter(t => !['human', 'system'].includes(t)).map(t => Type.Literal(t)))), threadId: Type.Optional(text(100)), correlationId: Type.Optional(text(100)), taskId: Type.Optional(text(100)), artifacts: Type.Optional(Type.Array(text(100), { maxItems: 32 })) }), 'collaborate', (args, { agent }) => engine.send({ ...args, type: args.type ?? 'direct', sender: agent.id, sessionId: engine.sessionId }));
   registry.register('roundtable_threads_list', 'List discussion threads with message counts.', empty, 'collaborate', () => {
@@ -150,15 +169,18 @@ export function installTools(registry: ToolRegistry): void {
     return [...counts].map(([threadId, count]) => ({ threadId, count }));
   });
   registry.register('roundtable_thread_read', 'Read the latest selected messages in a session thread.', Type.Object({ threadId: text(100), limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 100 })) }), 'collaborate', args => engine.repo.messages(engine.sessionId, args.threadId, args.limit ?? 20));
-  registry.register('roundtable_task_create', 'Create a shared task. Dependencies must already exist; this prevents dependency cycles.', Type.Object({ title: text(300), dependencies: Type.Optional(Type.Array(text(100), { maxItems: 20 })) }), 'collaborate', args => {
+  registry.register('roundtable_task_create', 'Create or reuse a shared task by stable key or normalized active title. Dependencies must already exist. Reuse assigned work items instead of creating duplicates.', Type.Object({ title: text(300), key: Type.Optional(text(300)), dependencies: Type.Optional(Type.Array(text(100), { maxItems: 20 })) }), 'collaborate', args => {
+    const existing = engine.repo.list<Task>('task', engine.sessionId).find(t => t.state !== 'cancelled' && (args.key ? t.key === workKey(args.key) : !['done', 'cancelled'].includes(t.state) && workKey(t.title) === workKey(args.title)));
+    if (existing) return existing;
     for (const dependency of args.dependencies ?? []) local<Task>('task', dependency);
-    const task: Task = { id: id(), sessionId: engine.sessionId, title: redact(args.title), state: 'open', findings: '', dependencies: args.dependencies ?? [] };
+    const task: Task = { id: id(), sessionId: engine.sessionId, title: redact(args.title), state: 'open', findings: '', dependencies: args.dependencies ?? [], ...(args.key ? { key: workKey(args.key) } : {}) };
     engine.repo.put('task', task); engine.repo.event(engine.sessionId, 'task_created', task); return task;
   });
   registry.register('roundtable_task_claim', 'Atomically claim an open task after its dependencies complete.', Type.Object({ taskId: text(100) }), 'collaborate', (args, { agent }) => engine.repo.transaction(() => {
     const task = local<Task>('task', args.taskId);
+    if (task.state === 'claimed' && task.owner === agent.id) return task;
     if (task.state !== 'open') throw new Error('Task is not open');
-    if (task.dependencies.some(d => local<Task>('task', d).state !== 'done')) throw new Error('Task dependencies are incomplete');
+    if (task.dependencies.some(d => { const dep = local<Task>('task', d); return dep.state !== 'done' || !taskEvidenceStatus(engine, dep).passed; })) throw new Error('Task dependencies are incomplete or lack current evidence');
     task.state = 'claimed'; task.owner = agent.id; task.updatedAt = timestamp(); engine.repo.put('task', task); engine.repo.event(engine.sessionId, 'task_claimed', task); return task;
   }));
   registry.register('roundtable_task_update', 'Append findings from any collaborator. Only the owner may complete or reopen a claimed task.', Type.Object({ taskId: text(100), findings: text(), state: Type.Optional(Type.Union(['open', 'done', 'cancelled'].map(s => Type.Literal(s)))) }), 'collaborate', (args, { agent }) => {
@@ -168,6 +190,7 @@ export function installTools(registry: ToolRegistry): void {
     if (task.findings.length + args.findings.length > 48000) throw new Error('Task findings limit reached');
     task.findings += `\n${agent.name}: ${redact(args.findings)}`;
     if (args.state === 'done' && task.dependencies.some(key => local<Task>('task', key).state !== 'done')) throw new Error('Task dependencies are incomplete');
+    if (args.state === 'done') { assertCodeComplete(engine, task); assertTaskEvidence(engine, task); }
     if (args.state === 'done' && taskValidation(engine, task.id).some(c => !c.passed)) throw new Error('Required independent validation has not passed. Use roundtable_task_requirements.');
     task.updatedAt = timestamp(); if (args.state) task.state = args.state;
     if (args.state === 'open') delete task.owner;

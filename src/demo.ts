@@ -1,3 +1,4 @@
+import { requireValidation } from './recovery.js';
 import { createHash } from 'node:crypto';
 import { createAssistantMessageEventStream, type AssistantMessage, type Context, type ToolCall, type JsonObject } from '@earendil-works/pi-ai';
 import { z } from 'zod';
@@ -60,7 +61,9 @@ function scriptedReply(modelId: string, context: Context): AssistantMessage['con
       switch (results.length) {
         case 0: return call('roundtable_artifact_read', { artifactId });
         case 1: return call('data_json_validate', { content: (results[0] as Artifact).content });
-        case 2: return call('roundtable_task_update', { taskId, findings: 'Validated the JSON design artifact against peer findings; ready for independent human validation.', state: 'done' });
+        case 2: return call('roundtable_task_requirements', { taskId });
+        case 3: return call('roundtable_validation_run', { contractId: (results[2] as { contract: { id: string } }[])[0]!.contract.id, artifactId });
+        case 4: return call('roundtable_task_update', { taskId, findings: 'Validated the JSON design artifact against peer findings; ready for independent human validation.', state: 'done' });
         default: return done('The shared task is complete. SQLite events preserve authoritative state; semantic retrieval can remain a secondary index. The artifact is ready for separate validation.');
       }
     }
@@ -108,6 +111,7 @@ export async function runDemo(repo: Repository, home: string, transcript?: (acti
     engine.send({ sender: 'human', sessionId: session.id, recipients: [alpha.id], type: 'human', body: demoObjective });
     await engine.idle();
     const task = repo.list<Task>('task', session.id)[0]; if (!task) throw new Error('Demo did not create a task');
+    requireValidation(engine, { taskId: task.id, artifactName: 'persistent-memory-design.json', description: 'Fixture acceptance: selected design and required design fields', validator: { kind: 'json', required: ['title', 'alternatives', 'invariants', 'exampleEvents'], equals: { selected: 'sqlite-events' } } });
     engine.send({ sender: 'human', sessionId: session.id, recipients: [gamma.id], type: 'human', body: 'Contribute an independent artifact using the shared findings.', taskId: task.id, correlationId: alpha.id });
     await engine.idle();
     const artifact = repo.list<Artifact>('artifact', session.id)[0]; if (!artifact) throw new Error('Demo did not publish an artifact');

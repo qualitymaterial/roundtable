@@ -38,6 +38,7 @@ export class InkTerminal {
   submitted(): void {}
   print(value: unknown): void { this.mount(); const text = safeTerminalText(typeof value === 'string' ? value : JSON.stringify(value, null, 2) ?? String(value)); this.controller.append(text.startsWith('[error]') ? 'error' : 'notice', '', text.replace(/^\[error\]\s*/, '')); }
   menu(title: string, rows: string[], hint?: string): void { this.mount(); this.controller.append('notice', title, [...rows, ...(hint ? [hint] : [])].join('\n')); }
+  review(title: string, rows: string[]): void { this.mount(); this.controller.append('notice', title, '```diff\n' + rows.join('\n') + '\n```'); }
   banner(project: string, home: string): void { void home; this.mount(); this.controller.update({ project }); if (!this.bannerShown) { this.bannerShown = true; this.controller.append('brand', 'Roundtable', project); } }
   session(session: SessionRecord): void {
     if (session.state === 'active') this.lastPause = undefined;
@@ -45,8 +46,9 @@ export class InkTerminal {
     const heading = JSON.stringify([session.id, session.name, session.objective]);
     if (heading !== this.sessionHeading) { this.sessionHeading = heading; this.controller.append('session', session.name ?? session.id.slice(0, 8), session.objective); }
   }
-  summary(session: SessionRecord, agents: AgentRecord[], tasks: number, activeIds?: string[]): void {
+  summary(session: SessionRecord, agents: AgentRecord[], tasks: number, activeIds?: string[], workRows?: string[]): void {
     this.session(session); this.controller.update({ agents: agents.filter(a => a.state !== 'removed').length, tasks, modelSummary: agents.filter(a => a.state !== 'removed').map(a => `${a.name}: ${a.model}${a.state === 'paused' ? ' (paused)' : ''}`).join(' · ') });
+    if (workRows) this.controller.update({ workRows: workRows.map(safeTerminalText) });
     if (activeIds) {
       if (this.controller.snapshot().live.some(a => !activeIds.includes(a.id) && (a.done || a.failed))) this.flushActivity();
       this.controller.update({ live: this.controller.snapshot().live.filter(a => activeIds.includes(a.id)) });

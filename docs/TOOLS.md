@@ -1,5 +1,21 @@
 # Tool registry and extension contract
 
+Protected factual checks and task completion gates: [Evidence verification](EVIDENCE_VERIFICATION.md).
+
+## Runtime web orchestration — 2026-10-20
+
+[WEB_ORCHESTRATION.md](WEB_ORCHESTRATION.md) documents current freshness-aware reuse, bounded semantic normalization, task/agent budgets and extensions, retry/no-new-evidence feedback, concise excerpts, source sections and `/diagnostics web`. Existing `web.*` canonical names and `web__*` model aliases are retained. Models cannot choose actor/scope IDs, deep profiles or approve their own extensions. Protected structured record checks are described in EVIDENCE_VERIFICATION.md; general prose facts remain unconfirmed.
+
+## Web Intelligence Phase 2 — 2026-10-20
+
+Opt-in `web.search`, `web.read`, `web.research`, `web.verify` and `web.cache` use `network.research`. Pi exposes portable aliases `web__search`, `web__read`, `web__research`, `web__verify` and `web__cache`; discovery reports both names. Existing underscore-named web tools retain their legacy contracts. See [WEB_INTELLIGENCE_PHASE_2.md](WEB_INTELLIGENCE_PHASE_2.md) for schemas/configuration, DNS controls, budgets, provenance/cache rules and verification limits. `web.verify` retains literal quotation checks and adds protected structured record verification. General prose claims remain insufficient; it does not run an LLM judge.
+
+## Coordinated project tools
+
+Human-created `/work` assignments expose `project_list`, `project_search`, `project_read`, `project_write`, `project_check`, `project_request_review`, `project_review` and `project_finish`. Each call names its assigned task. The runtime checks the actor, current turn's assignment, origin lease and phase; editor turns expose project editing/check tools, reviewer turns expose reading/review tools. Models cannot create leases, select commands, integrate or self-review. Writes require a current SHA-256 (or `new`), and checks/reviews bind to the exact revision. See [workflow and permissions](CODING.md), including the explicit unsandboxed host-check boundary.
+
+Collaborative team adds `project_team`, `project_findings`, `project_discuss`, `project_plan`, `project_claim_files`, `project_contribute`, `project_apply_contribution`, `project_ask`, `project_answer` and `project_ready`. Investigation and peer discussion precede the shared plan; each member can contribute implementation through claimed-file proposals. Proposals remain immutable until resolved, and applying requires prior inspection plus the unchanged file hash. Authors cannot approve their own files. Concrete questions/answers route through the runtime with an eight-question limit; proposals are capped at 30, review at three rounds, and incomplete-stage continuation at two attempts per participant/stage. Human `/team <task-id>` exposes the substantive exchange. Available tools change with the stage; execution guards still check identity, phase, task confinement and lease origin independently.
+
 Every Pi session receives model-callable ToolDefinitions translated from the registry. A tool's existence and input/output schema are distinct from authorization. Invocation checks the current agent state, agent capability list and session policy in the execution layer, validates input, applies the budget, audits activity and returns `{ok,data}`. Tool definitions have name, description, schemas, ownership and version. List availability is computed per agent. Generic output envelopes intentionally allow varied structured data.
 
 All required collaboration tools are operational:
@@ -81,7 +97,11 @@ MCP uses per-agent connection leases (maximum 32, 60-second idle expiry, bounded
 
 ### Waiting and peer notifications
 
-Use `roundtable_wait {}` when awaiting human direction, then finish the response. It persists across restart and blocks further tools and peer-triggered work until targeted human/system input. It is distinct from pausing/removing an agent and should not be used while awaiting a needed peer result. `roundtable_agents_list` includes `waitingForHuman`.
+Use `roundtable_wait {"mode":"peers"}` while awaiting a needed peer result, then finish the response without polling. Further tools, cached results and outgoing peer messages are blocked until a new actionable incoming message starts another turn. Ordinary notifications remain quiet. This creates no polling loop or synthetic wake; the receptive state needs no durable human-wait flag.
+
+Use `roundtable_wait {"mode":"human"}` for a needed human decision or when your work is complete. It persists across restart and blocks further tools and peer-triggered work until targeted human/system input. A peer-mode tool call cannot release an existing human wait. `roundtable_agents_list` includes `waitingForHuman`.
+
+For compatibility, `roundtable_wait {}` still works: it selects peers if the caller owns an unfinished task, otherwise human. The result includes `waitingFor` so the participant can verify the selected behavior. An owner awaiting a human decision with unfinished work must explicitly select human mode. Reviewers without an owned task must explicitly select peers while awaiting results. This does not change task ownership, completion requirements or agent pause/removal.
 
 `roundtable_send` is a non-waking notification by default (`task_request` is the exception). Set `expectsReply: true` for a concrete question, action request or result that requires processing now. Do not request responses to acknowledgments/readiness updates. Notifications remain readable in their threads; an acknowledged delivery alone does not prove a model consumed it.
 

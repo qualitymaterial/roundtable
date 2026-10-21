@@ -1,6 +1,6 @@
 {
   "name": "roundtable",
-  "version": "0.2.0-dev.12",
+  "version": "0.2.0-dev.16",
   "description": "Independent agents. Shared objectives. Universal capabilities. Real collaboration.",
   "license": "MIT",
   "repository": {
@@ -43,6 +43,7 @@
     "test:integration": "npm run build && tsx --test --test-concurrency=2 test/integration.test.ts test/network.test.ts test/provider.test.ts test/acceptance.test.ts test/transport.test.ts test/host.test.ts",
     "start": "node dist/cli.js",
     "demo": "node dist/cli.js demo",
+    "test:live-web": "tsx --test test/live/web-search.live.test.ts",
     "check": "npm run typecheck && npm run lint && npm test",
     "notices": "node scripts/notices.mjs"
   },
@@ -52,6 +53,7 @@
     "@earendil-works/pi-mcp": "1.1.0",
     "fflate": "0.8.3",
     "ink": "8.0.0",
+    "parse5": "8.0.1",
     "pdfjs-dist": "6.4.299",
     "react": "19.3.0",
     "saxes": "6.0.0",

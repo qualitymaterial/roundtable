@@ -7,9 +7,10 @@ import { saveJson } from './setup.js';
 import { redact, id } from './domain.js';
 import type { ToolRegistry } from './tools.js';
 import type { Repository } from './storage.js';
+import { WebConfig } from './web-types.js';
 
 export const httpUrl = z.url().refine(raw => { const u = new URL(raw); return ['http:', 'https:'].includes(u.protocol) && !u.username && !u.password; }, 'Use HTTP(S) without embedded credentials');
-export const ResearchConfig = z.object({ searchUrl: httpUrl.optional(), adapter: z.enum(['searxng', 'json']).default('searxng'), tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), fetchOrigins: z.array(httpUrl.refine(s => new URL(s).pathname === '/' && !new URL(s).search && !new URL(s).hash, 'Enter an origin without a path')).max(50).default([]), cacheSeconds: z.number().int().min(0).max(86400).default(900) }).strict();
+export const ResearchConfig = z.object({ searchUrl: httpUrl.optional(), adapter: z.enum(['searxng', 'json']).default('searxng'), tokenEnv: z.string().regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(), fetchOrigins: z.array(httpUrl.refine(s => new URL(s).pathname === '/' && !new URL(s).search && !new URL(s).hash, 'Enter an origin without a path')).max(50).default([]), cacheSeconds: z.number().int().min(0).max(86400).default(900), web: WebConfig.optional() }).strict();
 export function researchConfig(home: string) { const path = join(home, 'research.json'); return ResearchConfig.parse(existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {}); }
 export function saveResearch(home: string, input: unknown) { const config = ResearchConfig.parse(input); saveJson(join(home, 'research.json'), config); return config; }
 export async function boundedText(response: Response, maximum = 1024 * 1024): Promise<string> {

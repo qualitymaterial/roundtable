@@ -1,3 +1,4 @@
+import { requireValidation, validateContract } from '../src/recovery.js';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { join } from 'node:path';
@@ -76,6 +77,9 @@ test('task transitions enforce atomic claims, dependencies and owner completion'
     assert.deepEqual(claims.map(c => c.ok), [true, false]);
     assert.equal((await tool(f.engine, b, 'roundtable_task_update', { taskId: first.id, findings: 'Independent finding' })).ok, true);
     assert.equal((await tool(f.engine, b, 'roundtable_task_update', { taskId: first.id, findings: 'Unauthorized completion', state: 'done' })).ok, false);
+    const contract = requireValidation(f.engine, { taskId: first.id, artifactName: 'task-result.json', description: 'Fixture result equals 42', validator: { kind: 'json', required: ['answer'], equals: { answer: 42 } } });
+    const artifact = (await tool<Artifact>(f.engine, a, 'roundtable_artifact_publish', { name: 'task-result.json', content: '{"answer":42}', provenance: 'Deterministic test fixture' })).data;
+    assert.equal((await validateContract(f.engine, contract.id, artifact.id, b.id)).passed, true);
     assert.equal((await tool(f.engine, a, 'roundtable_task_update', { taskId: first.id, findings: 'Validated', state: 'done' })).ok, true);
     assert.equal((await tool(f.engine, b, 'roundtable_task_claim', { taskId: next.id })).ok, true);
     assert.equal((await tool(f.engine, a, 'roundtable_task_create', { title: 'Bad dependency', dependencies: ['missing'] })).ok, false);

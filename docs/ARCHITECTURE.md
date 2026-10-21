@@ -1,5 +1,9 @@
 # Architecture
 
+## Web Intelligence Phase 2 — 2026-10-20
+
+`Engine.web` owns a session-scoped `WebIntelligence` service. `web-tools.ts` installs canonical dotted tools into the existing registry; Pi receives portable wire aliases. `web-providers.ts` separates search adapters from model endpoints; `web-http.ts` owns DNS-pinned bounded transport, `web-extract.ts` owns non-executing HTML extraction and `web-types.ts` owns validated contracts/configuration. Sources, cache indexes and budgets use the existing SQLite entity/transaction boundary. No additional runtime, fixed agent roles or model-provider browsing API is introduced. Existing legacy research/MCP interfaces remain compatible. [WEB_INTELLIGENCE_PHASE_2.md](WEB_INTELLIGENCE_PHASE_2.md) specifies implemented limits and deferred extensions.
+
 Roundtable is a single local Node.js process. SQLite owns shared committed state; each Pi AgentSession owns a separate conversation and JSONL lifecycle. The terminal is an adapter to the collaboration engine, not the engine itself. No server or coordinator agent is mandatory.
 
 ```mermaid

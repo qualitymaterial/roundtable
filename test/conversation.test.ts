@@ -1,3 +1,5 @@
+import { requireValidation, validateContract } from '../src/recovery.js';
+import type { Artifact } from '../src/domain.js';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { Engine } from '../src/engine.js';
@@ -82,6 +84,78 @@ test('a peer suggestion without a human request cannot activate tool work', asyn
     const a = await agent(f.engine, 'A'); const b = await agent(f.engine, 'B');
     f.engine.send({ sender: a.id, sessionId: f.session.id, recipients: [b.id], type: 'task_request', body: 'Let us review the repository' }); await f.engine.idle();
     assert.equal(result?.ok, false); assert.equal(f.repo.list('task', f.session.id).length, 0);
+  } finally { await f.close(); }
+});
+
+test('an owner waiting before two peer reviews can finish without another human message', async () => {
+  let calls = 0; let taskId = '';
+  const f = fixture(async (actor, engine) => ({ ...noop, prompt: async () => {
+    calls++;
+    const task = engine.repo.get<{ findings: string }>('task', taskId)!;
+    if (task.findings.includes('Review B') && task.findings.includes('Review C')) {
+      const contract = requireValidation(engine, { taskId, artifactName: 'reviews.json', description: 'Fixture requires two recorded reviews', validator: { kind: 'json', required: ['reviews'], equals: { reviews: 2 } } });
+      const artifact = (await tool<Artifact>(engine, actor, 'roundtable_artifact_publish', { name: 'reviews.json', content: JSON.stringify({ reviews: ['Review B', 'Review C'].filter(s => task.findings.includes(s)).length }), provenance: 'Conversation test fixture' })).data;
+      assert.equal((await validateContract(engine, contract.id, artifact.id, 'human')).passed, true);
+      assert.equal((await tool(engine, actor, 'roundtable_task_update', { taskId, findings: 'Both reviews accepted', state: 'done' })).ok, true);
+    }
+    const wait = await tool<{ waitingFor: string }>(engine, actor, 'roundtable_wait');
+    assert.equal(wait.ok, true);
+    assert.equal(wait.data.waitingFor, task.findings.includes('Review C') ? 'human' : 'peers');
+  } }));
+  try {
+    const owner = await agent(f.engine, 'Owner'); const b = await agent(f.engine, 'B'); const c = await agent(f.engine, 'C');
+    const created = await tool<{ id: string }>(f.engine, owner, 'roundtable_task_create', { title: 'Fix and review' }); taskId = created.data.id;
+    await tool(f.engine, owner, 'roundtable_task_claim', { taskId });
+    f.engine.send({ sender: 'human', sessionId: f.session.id, recipients: [owner.id], type: 'human', body: 'Finish the fix after both peer reviews.' });
+    await f.engine.idle(); assert.equal(f.engine.waiting(owner.id), false);
+    await tool(f.engine, b, 'roundtable_send', { recipients: [owner.id], body: 'Ready to review.' }); await f.engine.idle(); assert.equal(calls, 1);
+    for (const reviewer of [b, c]) {
+      await tool(f.engine, reviewer, 'roundtable_task_update', { taskId, findings: `Review ${reviewer.name}: checked the resulting file.` });
+      await tool(f.engine, reviewer, 'roundtable_send', { recipients: [owner.id], body: `Process my completed review ${reviewer.name}.`, taskId, expectsReply: true });
+      await f.engine.idle();
+    }
+    assert.equal(calls, 3); assert.equal(f.repo.get<{ state: string }>('task', taskId)!.state, 'done');
+    assert.equal(f.engine.waiting(owner.id), true);
+    assert.equal(f.repo.messages(f.session.id).filter(m => m.sender === 'human').length, 1);
+    assert.equal(f.repo.deliveries(f.session.id, ['failed', 'pending', 'inflight']).length, 0);
+  } finally { await f.close(); }
+});
+
+test('explicit human wait with unfinished work stays durable and cannot be changed by a peer wait tool', async () => {
+  const f = fixture(); let restored: Engine | undefined; let calls = 0;
+  try {
+    const owner = await agent(f.engine, 'Owner'); const peer = await agent(f.engine, 'Peer');
+    const task = await tool<{ id: string }>(f.engine, owner, 'roundtable_task_create', { title: 'Needs a human decision' });
+    await tool(f.engine, owner, 'roundtable_task_claim', { taskId: task.data.id });
+    const wait = await tool<{ waitingFor: string }>(f.engine, owner, 'roundtable_wait', { mode: 'human' });
+    assert.equal(wait.ok, true); assert.equal(wait.data.waitingFor, 'human'); assert.equal(f.engine.waiting(owner.id), true);
+    assert.equal((await tool(f.engine, owner, 'roundtable_wait', { mode: 'peers' })).ok, false);
+    assert.equal(f.engine.waiting(owner.id), true);
+    await f.engine.close();
+    restored = new Engine(f.repo, f.session.id, async () => ({ ...noop, prompt: async () => { calls++; } }));
+    await restored.connect();
+    restored.send({ sender: peer.id, sessionId: f.session.id, recipients: [owner.id], type: 'task_request', body: 'Please process my review.' }); await restored.idle();
+    assert.equal(calls, 0); assert.equal(restored.waiting(owner.id), true);
+    restored.send({ sender: 'human', sessionId: f.session.id, recipients: [owner.id], type: 'human', body: 'Use this human decision and continue.' }); await restored.idle();
+    assert.equal(calls, 1); assert.equal(restored.waiting(owner.id), false);
+  } finally { await restored?.close(); await f.close(); }
+});
+
+test('explicit peer wait without an owned task permits actionable requests but not courtesy turns', async () => {
+  let calls = 0;
+  const f = fixture(async (actor, engine) => ({ ...noop, prompt: async () => {
+    calls++; assert.equal((await tool(engine, actor, 'roundtable_agents_list')).ok, true);
+  } }));
+  try {
+    const a = await agent(f.engine, 'A'); const b = await agent(f.engine, 'B');
+    f.engine.send({ sender: 'human', sessionId: f.session.id, recipients: [a.id], type: 'human', body: 'Review the upcoming result.' }); await f.engine.idle();
+    assert.equal((await f.engine.tools.execute(a, 'roundtable_agents_list', {}, 'before-peer-wait') as { ok: boolean }).ok, true);
+    const wait = await tool<{ waitingFor: string }>(f.engine, a, 'roundtable_wait', { mode: 'peers' });
+    assert.equal(wait.ok, true); assert.equal(wait.data.waitingFor, 'peers'); assert.equal(f.engine.waiting(a.id), false);
+    assert.equal((await tool(f.engine, a, 'roundtable_tasks_list')).ok, false);
+    assert.equal((await f.engine.tools.execute(a, 'roundtable_agents_list', {}, 'before-peer-wait') as { ok: boolean }).ok, false);
+    await tool(f.engine, b, 'roundtable_send', { recipients: [a.id], body: 'Thanks for reviewing.' }); await f.engine.idle(); assert.equal(calls, 1);
+    await tool(f.engine, b, 'roundtable_send', { recipients: [a.id], body: 'Please inspect the completed result.', expectsReply: true }); await f.engine.idle(); assert.equal(calls, 2);
   } finally { await f.close(); }
 });
 
