@@ -22,8 +22,13 @@ test('live SearXNG search returns provenance-bound sources that a peer can read 
     assert.equal(found.ok, true, JSON.stringify(found).slice(0, 500));
     assert.ok(found.data.sources.length > 0, 'live provider returned no results');
     for (const s of found.data.sources) { assert.match(s.url, /^https?:\/\//); assert.equal(s.untrusted, true); assert.match(s.hash, /^[a-f0-9]{64}$/); }
-    const read = await tool<{ sources: { id: string; kind: string }[] }>(f.engine, b, 'web.read', { url: found.data.sources[0]!.url });
-    console.log(`live: ${found.data.sources.length} results; read ok=${read.ok}`);
+    // Retrieval must succeed and yield a usable page snapshot with provenance, not just a search snippet.
+    const read = await tool<{ sources: { id: string; kind: string; url: string; canonicalUrl: string; text: string; hash: string; retrievedAt: string; untrusted: boolean; totalChars: number }[] }>(f.engine, b, 'web.read', { url: found.data.sources[0]!.url });
+    assert.equal(read.ok, true, `web.read failed: ${JSON.stringify(read).slice(0, 500)}`);
+    const page = read.data.sources[0]; assert.ok(page, 'web.read returned no snapshot');
+    assert.equal(page.kind, 'page'); assert.ok(page.text.trim().length >= 50, 'page snapshot has no usable text');
+    assert.match(page.canonicalUrl, /^https?:\/\//); assert.match(page.hash, /^[a-f0-9]{64}$/); assert.ok(!Number.isNaN(Date.parse(page.retrievedAt))); assert.equal(page.untrusted, true);
+    console.log(`live: ${found.data.sources.length} results; read ${page.totalChars} chars from ${page.canonicalUrl}`);
     const cached = await tool<{ source: { hash: string } }>(f.engine, b, 'web.cache', { action: 'get', sourceId: found.data.sources[0]!.id });
     assert.equal(cached.ok, true); assert.equal(cached.data.source.hash, found.data.sources[0]!.hash);
   } finally { await f.close(); }

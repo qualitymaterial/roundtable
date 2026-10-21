@@ -116,6 +116,11 @@ export class ToolRegistry implements ToolExecutor {
   piTools(agent: AgentRecord): ToolDefinition[] {
     return [...this.entries.values()].map(tool => ({
       name: this.wireName(tool.name), label: tool.name, description: tool.description, parameters: tool.inputSchema, outputSchema: tool.outputSchema,
+      // Pi coerces primitive types (e.g. 7 -> "7") after this hook; reject raw schema-invalid input so it never changes meaning and runs.
+      prepareArguments: (args: unknown) => {
+        if (!Value.Check(tool.inputSchema, args)) throw new Error(`Validation failed for tool "${this.wireName(tool.name)}": arguments do not match the schema exactly; types are not coerced. Received: ${redact(JSON.stringify(args) ?? 'undefined').slice(0, 500)}`);
+        return args as Static<TSchema>;
+      },
       execute: async (callId, args, signal) => {
         const result = await this.execute(agent, tool.name, args, callId, signal);
         return { content: [{ type: 'text' as const, text: JSON.stringify(result) }], details: result, structuredContent: result as JsonValue };
