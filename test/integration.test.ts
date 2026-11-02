@@ -136,7 +136,8 @@ test('CLI subprocesses create, export, validate and restore a demo after process
   const home = mkdtempSync(join(tmpdir(), 'roundtable-cli-'));
   const run = (args: string[], input?: string) => spawnSync(process.execPath, [resolve('dist/cli.js'), ...args], { encoding: 'utf8', input, env: { ...process.env, ROUNDTABLE_HOME: home }, timeout: 60000 });
   try {
-    assert.equal(run(['--help']).status, 0); assert.equal(run(['init']).status, 0); assert.equal(run(['doctor']).status, 0);
+    const help = run(['--help']); assert.equal(help.status, 0); assert.match(help.stdout, /^Roundtable[^\n]*\n\nStart here:\n[\s\S]*roundtable demo[\s\S]*Everything below is the full reference/);
+    assert.equal(run(['init']).status, 0); assert.equal(run(['doctor']).status, 0);
     const empty = run([], 'Empty session\nhello\n/status\n/exit\n');
     assert.equal(empty.status, 0, empty.stdout + empty.stderr);
     assert.ok(empty.stdout.includes('No agents connected; message was not sent'));

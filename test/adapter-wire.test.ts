@@ -136,7 +136,11 @@ test('real Pi OpenAI-compatible and Anthropic adapters discover, call and recove
 function handoff(turn: Turn): Reply {
   if (turn.user.includes('Compatibility test.')) return script(turn);
   const handle = turn.user.match(/HANDLE=([0-9a-f-]{36})/)?.[1];
-  if (handle) return turn.results.length ? { text: `reviewed ${handle}` } : { call: { name: 'web__cache', args: { action: 'get', sourceId: handle, length: 200 } } };
+  if (handle) {
+    if (turn.results.length === 0) return { call: { name: 'web__cache', args: { action: 'get', length: 200 } } };
+    if (turn.results.length === 1) return { call: { name: 'web__cache', args: { action: 'get', sourceId: handle, length: 200 } } };
+    return { text: `reviewed ${handle}` };
+  }
   const share = turn.user.match(/SHARE=([0-9a-f-]{36}),([0-9a-f-]{36})/);
   if (!share) return { text: 'nothing to do' };
   if (turn.results.length === 0) return { call: { name: 'web__search', args: { query: 'handoff evidence' } } };
@@ -173,7 +177,9 @@ test('source handles pass through real runtime message delivery; peers retrieve 
     assert.equal(source.id, handle);
     // The reviewer's own context received the delivered message and its own cache call returned the same snapshot.
     const reviewed = work.filter(t => t.protocol === 'anthropic' && t.user.includes(`HANDLE=${handle}`) && t.results.length).at(-1)!;
-    const evidence = JSON.parse(reviewed.results[0]!.text) as { ok: boolean; data: { source: { hash: string; text: string } } };
+    // Missing get.sourceId must be rejected at Pi's schema boundary, before a cache operation.
+    assert.match(reviewed.results[0]!.text, /Validation failed/);
+    const evidence = JSON.parse(reviewed.results[1]!.text) as { ok: boolean; data: { source: { hash: string; text: string } } };
     assert.equal(evidence.ok, true); assert.equal(evidence.data.source.hash, source.hash); assert.ok(evidence.data.source.text.length <= 200);
     // The restricted recipient got the same message but has no web tool, so the handle grants nothing.
     const blocked = work.filter(t => t.model === 'restricted-model' && t.user.includes(`HANDLE=${handle}`) && t.results.length).at(-1)!;

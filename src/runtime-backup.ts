@@ -44,7 +44,7 @@ export function backupRuntime(home: string, destination: string, password: strin
     const walk = (folder: string, prefix = '', depth = 0) => {
       if (depth > 30) throw new Error('Runtime nesting limit');
       for (const entry of readdirSync(folder, { withFileTypes: true })) {
-        if (!prefix && (['.processes', '.maintenance.json'].includes(entry.name) || /^roundtable\.db(?:-|$)/.test(entry.name))) continue;
+        if (!prefix && (['.processes', '.maintenance.json', 'browser-private'].includes(entry.name) || /^roundtable\.db(?:-|$)/.test(entry.name))) continue;
         if (prefix === 'sandbox-runs/' && entry.name.startsWith('input-')) continue;
         const key = prefix + entry.name; const path = join(folder, entry.name); const info = lstatSync(path);
         if (info.isSymbolicLink()) throw new Error('Runtime contains a link; snapshot it separately before backup');
@@ -68,7 +68,7 @@ export function restoreRuntime(file: string, target: string, password: string, p
   const data = Buffer.concat([decipher.update(Buffer.from(envelope.encrypted, 'base64')), decipher.final()]);
   const payload = Payload.parse(JSON.parse(gunzipSync(data, { maxOutputLength: maxBytes * 2 }).toString('utf8')));
   const paths = new Set<string>(); let bytes = 0;
-  for (const entry of payload.files) { safePath(entry.path); if (['.processes', '.maintenance.json', '.roundtable-stage.json'].includes(entry.path.split('/')[0]!)) throw new Error('Reserved backup path'); const key = entry.path.toLowerCase(); if (paths.has(key)) throw new Error('Duplicate backup path'); paths.add(key); const content = Buffer.from(entry.data, 'base64'); if ((bytes += content.length) > maxBytes || hash(content) !== entry.hash) throw new Error('Backup integrity/size mismatch'); }
+  for (const entry of payload.files) { safePath(entry.path); if (['.processes', '.maintenance.json', '.roundtable-stage.json', 'browser-private'].includes(entry.path.split('/')[0]!)) throw new Error('Reserved backup path'); const key = entry.path.toLowerCase(); if (paths.has(key)) throw new Error('Duplicate backup path'); paths.add(key); const content = Buffer.from(entry.data, 'base64'); if ((bytes += content.length) > maxBytes || hash(content) !== entry.hash) throw new Error('Backup integrity/size mismatch'); }
   if (!paths.has('roundtable.db')) throw new Error('Backup database missing');
   const rebase = (value: unknown): string | undefined => {
     if (typeof value !== 'string' || !isAbsolute(value)) return undefined;

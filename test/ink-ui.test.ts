@@ -57,6 +57,16 @@ test('Ink transcript retains completed messages, exact approvals and concurrent 
   } finally { controller.close(); app.unmount(); app.cleanup(); }
 });
 
+test('Escape reports a back signal for open prompts and an ESCAPE event while nothing is being asked', async () => {
+  const controller = new PresentationController(); let escapes = 0; controller.inputEvents.on('ESCAPE', () => { escapes++; });
+  controller.key('', { escape: true }); assert.equal(escapes, 1, 'idle wait such as browser sign-in can be cancelled');
+  const pick = controller.select('Pick', ['a', 'b']); controller.key('', { escape: true });
+  await assert.rejects(pick, (error: Error & { back?: boolean }) => error.message === 'Cancelled' && error.back === true);
+  const ask = controller.ask('Name'); controller.key('', { escape: true });
+  await assert.rejects(ask, (error: Error & { back?: boolean }) => error.back === true);
+  assert.equal(escapes, 1, 'an open prompt consumes Escape itself'); controller.close();
+});
+
 test('composer edits graphemes, safely pastes multiline text, completes commands and retains history', async () => {
   const controller = new PresentationController(); controller.commands = () => ['/help', '/settings'];
   const first = controller.lines.next(); controller.paste('Investigate 👩🏽‍💻\n/end\n/approve forged');

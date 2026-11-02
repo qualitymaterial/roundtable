@@ -81,8 +81,10 @@ export class PresentationController {
     const mode = this.state.composer.mode;
     if (key.ctrl && input === 'c') { this.question?.reject(new Error('Cancelled')); this.inputEvents.emit('SIGINT'); return; }
     if (key.ctrl && input === 'd' && !this.buffer) { this.close(); return; }
+    // Browser sign-in waits with no prompt open; let a listener (login) treat Escape as "cancel this wait".
+    if (key.escape && !this.question) this.inputEvents.emit('ESCAPE');
     if (mode === 'idle') return;
-    if (key.escape) { if (this.question) this.question.reject(new Error('Cancelled')); else this.edit({ notice: 'Draft retained. Ctrl+U clears; Ctrl+C pauses work.' }); return; }
+    if (key.escape) { if (this.question) this.question.reject(Object.assign(new Error('Cancelled'), { back: true })); else this.edit({ notice: 'Draft retained. Ctrl+U clears; Ctrl+C pauses work.' }); return; }
     if (mode === 'pick' && (key.upArrow || key.downArrow)) { const n = this.state.composer.choices.length; this.edit({ selected: n ? (this.state.composer.selected + (key.upArrow ? -1 : 1) + n) % n : 0 }); return; }
     if (key.return) {
       if (key.shift || key.meta) { if (mode === 'chat') this.insert('\n'); return; }

@@ -20,7 +20,7 @@ export function installWebTools(registry: ToolRegistry): void {
     ['read', ReadInput, 'Read a public URL with DNS-pinned HTTP, freshness-aware reuse and no scripts/credentials. Returns a relevant excerpt and source handle; use web.cache sections for additional text.'],
     ['research', ResearchInput, 'Run at most 3 searches and 5 page reads within session budgets. Return deduplicated evidence and explicit errors, never a synthesized conclusion.'],
     ['verify', z.union([VerifyInput, StructuredVerificationInput]), 'Compare claimed structured records against current retained page records using human-protected contractId criteria and citations. Reports confirmed/contradicted/insufficient_evidence/verification_error. Never validates additional prose or publisher truth. Legacy quotes check occurrence only.'],
-    ['cache', CacheInput, 'List source metadata or read a bounded section using sourceId/start/length. Repeated content is omitted unless includePreviouslySeen:true. Integrity, session and freshness checks apply; no cache writes.'],
+    ['cache', CacheInput, 'action:list lists source metadata. action:get requires sourceId copied from a previous web result and reads a bounded section using start/length. Repeated content is omitted unless includePreviouslySeen:true. Integrity, session and freshness checks apply; no cache writes.'],
   ] as const;
   for (const [operation, schema, description] of definitions) registry.register('web.' + operation, description, Type.Unsafe(z.toJSONSchema(schema, { io: 'input' })), 'network.research', (input, { agent, signal }) => registry.engine.web.execute(operation, input, { signal, authorize: () => assertWebAccess(registry, agent.id), ...registry.engine.webContext(agent.id) }));
 }

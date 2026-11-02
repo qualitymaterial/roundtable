@@ -14,6 +14,8 @@ test('encrypted runtime backup restores all sessions/private config while disabl
   const repo = new Repository(join(home, 'roundtable.db')); const session = Engine.create(repo, join(home, 'workspaces'), 'Recover');
   repo.insertMessage({ id: 'message', sessionId: session.id, sender: 'human', recipients: ['agent'], type: 'human', body: 'pending', threadId: 'main', artifacts: [], timestamp: new Date().toISOString() });
   writeFileSync(join(home, 'auth.json'), '{"test":"PRIVATE_BACKUP_FIXTURE"}');
+  mkdirSync(join(home, 'browser-private')); writeFileSync(join(home, 'browser-private', 'route.json'), '{"key":"EPHEMERAL_BRIDGE_FIXTURE"}');
+  const browserSession = Engine.create(repo, join(home, 'workspaces'), 'Private browser recovery', { browserLocal: { models: [] } });
   writeFileSync(join(session.workspace, 'large.txt'), 'x'.repeat(8 * 1024 * 1024));
   const canonicalWorkspace = realpathSync.native(session.workspace);
   const checkpoint = { id: 'fixture-checkpoint', sessionId: session.id, scope: 'workspace', path: join(canonicalWorkspace, 'large.txt'), state: 'applied' }; repo.put('checkpoint', checkpoint);
@@ -40,6 +42,9 @@ test('encrypted runtime backup restores all sessions/private config while disabl
       assert.equal(JSON.parse(history[0]!).cwd, s.workspace); assert.equal(JSON.parse(history[0]!).parentSession, undefined); assert.equal(JSON.parse(history[1]!).content, 'preserved');
       assert.equal(restored.deliveries(session.id, ['failed']).length, 1); assert.equal(restored.deliveries(session.id).length, 0);
       assert.match(readFileSync(join(target, 'auth.json'), 'utf8'), /PRIVATE_BACKUP_FIXTURE/); assert.equal(readFileSync(join(s.workspace, 'large.txt')).length, 8 * 1024 * 1024);
+      assert.equal(existsSync(join(target, 'browser-private')), false, 'Ephemeral bridge credentials and process locks must not be restored');
+      assert.deepEqual(restored.get<SessionRecord>('session', browserSession.id)!.browserLocal, { models: [] });
+      assert.ok(restored.get('browser_policy', browserSession.id), 'The local-only policy seal must survive recovery');
     } finally { restored.close(); }
     assert.throws(() => restoreRuntime(archive, target, password), /new destination/);
   } finally { try { repo.close(); } catch { /* closed above */ } rmSync(root, { recursive: true, force: true }); }

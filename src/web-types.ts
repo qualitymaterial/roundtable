@@ -54,7 +54,12 @@ export type SearchRequest = z.output<typeof SearchInput>;
 export const ReadInput = z.object({ url: z.string().min(1).max(2000), maxAgeSeconds: z.number().int().min(0).max(86400).optional(), fresh: z.boolean().default(false), focus: z.string().max(1000).optional() }).strict();
 export const ResearchInput = z.object({ queries: z.array(SearchInput).min(1).max(3), urls: z.array(z.string().min(1).max(2000)).max(5).default([]), maxReads: z.number().int().min(0).max(5).default(2) }).strict();
 export const VerifyInput = z.object({ claim: z.object({ kind: z.enum(['text', 'quote']), text: z.string().trim().min(1).max(2000), counterText: z.string().trim().min(1).max(2000).optional() }).strict(), sourceIds: z.array(z.string().uuid()).min(1).max(10) }).strict();
-export const CacheInput = z.object({ action: z.enum(['list', 'get']), sourceId: z.string().uuid().optional(), maxAgeSeconds: z.number().int().min(0).max(86400).optional(), start: z.number().int().min(0).max(64000).default(0), length: z.number().int().min(1).max(4000).default(1200), includePreviouslySeen: z.boolean().default(false) }).strict();
+const CacheSourceId = z.string().uuid().describe('Source UUID copied from a previous web result. Required for action=get.');
+const CacheSection = { maxAgeSeconds: z.number().int().min(0).max(86400).optional(), start: z.number().int().min(0).max(64000).default(0), length: z.number().int().min(1).max(4000).default(1200), includePreviouslySeen: z.boolean().default(false) };
+export const CacheInput = z.discriminatedUnion('action', [
+  z.object({ action: z.literal('list'), sourceId: CacheSourceId.optional(), ...CacheSection }).strict(),
+  z.object({ action: z.literal('get'), sourceId: CacheSourceId, ...CacheSection }).strict(),
+]);
 export const SourceSchema = z.object({
   id: z.string().uuid(), sessionId: z.string(), policy: z.string().length(64), kind: z.enum(['snippet', 'page']),
   url: z.url(), canonicalUrl: z.url(), title: z.string().max(1000), text: z.string().max(64000),

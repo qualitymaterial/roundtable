@@ -8,6 +8,7 @@ import { redact } from './domain.js';
 import type { Engine, AdapterFactory } from './engine.js';
 import type { ProviderRegistry } from './providers.js';
 import { collaborationTools } from './code-collaboration.js';
+import { assertBrowserModel, localModelFetch } from './browser-policy.js';
 
 export type ModelStream = (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 const usageDetails = (message: AssistantMessage) => ({ inputTokens: message.usage.input, outputTokens: message.usage.output, cacheReadTokens: message.usage.cacheRead, cacheWriteTokens: message.usage.cacheWrite });
@@ -19,6 +20,8 @@ export class PiAdapter implements AgentAdapter {
   }
   static async create(registry: ProviderRegistry, agent: AgentRecord, engine: Engine, stream?: ModelStream): Promise<PiAdapter> {
     const catalogModel = registry.model(agent.provider, agent.model);
+    const browserPolicy = engine.session().browserLocal;
+    const localTransport = browserPolicy ? localModelFetch(assertBrowserModel(browserPolicy, catalogModel)) : undefined;
     if (agent.effort && !getSupportedThinkingLevels(catalogModel).includes(agent.effort)) throw new Error(`Effort ${agent.effort} is unsupported by this model. Supported: ${getSupportedThinkingLevels(catalogModel).join(', ')}`);
     if (agent.maxOutputTokens && agent.maxOutputTokens > catalogModel.maxTokens) throw new Error('Output limit exceeds the model catalog maximum');
     if (agent.contextWindowTokens && agent.contextWindowTokens > catalogModel.contextWindow) throw new Error('Context limit exceeds the model catalog window');
@@ -27,7 +30,7 @@ export class PiAdapter implements AgentAdapter {
     if (!stream) {
       // Probe on each connection; endpoint/model may have changed since the last run.
       await registry.validate(agent.provider, agent.model, () => engine.request(agent, true), response =>
-        engine.recordUsage(agent.id, response.usage.totalTokens, response.usage.cost.total, 'compatibility: provider tokens; SDK price estimate', usageDetails(response)));
+        engine.recordUsage(agent.id, response.usage.totalTokens, response.usage.cost.total, 'compatibility: provider tokens; SDK price estimate', usageDetails(response)), localTransport);
     }
     const agentDir = join(registry.home, 'sessions', engine.sessionId, agent.id); mkdirSync(agentDir, { recursive: true });
     const hostInstructions = `Local machine tools: use host_roots, host_list, host_search and host_read for user files outside the separate session workspace. Use host_write with an expected SHA-256 for edits. Session host access: ${JSON.stringify(engine.session().hostAccess ?? {})}. For a project, read its AGENTS.md instructions before editing. host_execute runs approved commands with OS user privileges; after approvalRequired, stop and wait for the human approval message, then retry the exact command once. Never poll for approval or claim a pending command ran.`;
@@ -47,7 +50,9 @@ export class PiAdapter implements AgentAdapter {
       // Conservative byte estimate: pause before growing beyond the model context window.
       if (!compacting && Buffer.byteLength(JSON.stringify(context)) > selected.contextWindow * 3) { void engine.pause('Context estimate reached; use /context and compact this agent before continuing'); throw new Error('Context limit'); }
       engine.request(agent);
-      const response = await (stream ? stream(selected, context, { ...options, maxTokens: model.maxTokens }) : original(selected, context, { ...options, maxTokens: model.maxTokens }));
+      const currentBrowserPolicy = engine.session().browserLocal;
+      const guardedOptions = { ...options, maxTokens: model.maxTokens, ...(currentBrowserPolicy ? { fetch: localModelFetch(assertBrowserModel(currentBrowserPolicy, selected)) } : {}) };
+      const response = await (stream ? stream(selected, context, guardedOptions) : original(selected, context, guardedOptions));
       if (compacting) {
         // Pi summary streams do not emit ordinary message_end events. Count even failed attempts.
         void response.result().then(message => engine.recordUsage(agent.id, message.usage.totalTokens, message.usage.cost.total, 'compaction: provider tokens; SDK cost estimate', usageDetails(message)));

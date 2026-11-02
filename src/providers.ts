@@ -67,17 +67,17 @@ export class ProviderRegistry implements ProviderAdapter {
   }
   model(provider: string, model: string): Model<Api> { const selected = this.runtime.getModel(provider, model); if (!selected) throw new Error(`Unknown model ${provider}/${model}; use /models ${provider}`); return selected; }
   async login(provider: string, type: 'oauth' | 'api_key', interaction: AuthInteraction): Promise<void> { await this.runtime.login(provider, type, interaction); }
-  async validate(provider: string, modelId: string, beforeRequest?: () => void, onResponse?: (response: AssistantMessage) => void): Promise<AssistantMessage[]> {
+  async validate(provider: string, modelId: string, beforeRequest?: () => void, onResponse?: (response: AssistantMessage) => void, fetch?: typeof globalThis.fetch): Promise<AssistantMessage[]> {
     const model = this.model(provider, modelId); const nonce = id();
     const context: Context = { messages: [{ role: 'user', content: `Compatibility test. Call roundtable_probe with nonce ${nonce}. After its result, reply with the returned receipt.`, timestamp: Date.now() }], tools: [{ name: 'roundtable_probe', description: 'Echo a nonce and return a receipt.', parameters: Type.Object({ nonce: Type.String() }) }] };
     const signal = AbortSignal.timeout(30000);
-    beforeRequest?.(); const first = await this.runtime.completeSimple(model, context, { signal, maxTokens: 256 });
+    beforeRequest?.(); const first = await this.runtime.completeSimple(model, context, { signal, maxTokens: 256, fetch });
     onResponse?.(first);
     const call = first.content.find(c => c.type === 'toolCall' && c.name === 'roundtable_probe');
     if (first.stopReason !== 'toolUse' || !call || call.type !== 'toolCall' || call.arguments.nonce !== nonce) throw new Error(`Tool compatibility failed for ${provider}/${modelId}: ${redact(first.errorMessage ?? 'valid tool call was not returned')}`);
     const receipt = `receipt-${id()}`;
     context.messages.push(first, { role: 'toolResult', toolCallId: call.id, toolName: call.name, content: [{ type: 'text', text: receipt }], isError: false, timestamp: Date.now() });
-    beforeRequest?.(); const second = await this.runtime.completeSimple(model, context, { signal, maxTokens: 256 });
+    beforeRequest?.(); const second = await this.runtime.completeSimple(model, context, { signal, maxTokens: 256, fetch });
     onResponse?.(second);
     if (second.stopReason !== 'stop' || !second.content.some(c => c.type === 'text' && c.text.includes(receipt))) throw new Error(`Tool-result compatibility failed for ${provider}/${modelId}`);
     return [first, second];

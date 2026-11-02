@@ -60,6 +60,7 @@ export async function loginFlow(registry: ProviderRegistry, io: MenuIO, provider
           const url = event.type === 'auth_url' ? event.url : event.verificationUri;
           io.print(`Sign in at: ${url}`);
           if (event.type === 'device_code') io.print(`Device code: ${event.userCode}`); else if (event.instructions) io.print(event.instructions);
+          io.print('Waiting for sign-in. Press Esc (or Ctrl+C) to cancel and choose another provider.');
           if (launch) void browser(url).catch(() => io.print('Could not open the browser. Open the printed link manually.'));
         } else io.print(event.message);
       },

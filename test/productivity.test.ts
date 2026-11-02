@@ -13,7 +13,7 @@ import { registerMock } from '../src/demo.js';
 import { normalizeHostPolicy, undoCheckpoint, listCheckpoints, previewCheckpoint, executeHost } from '../src/host-tools.js';
 import { BackgroundJobs } from '../src/jobs.js';
 import { completionReport } from '../src/completion.js';
-import { setup } from '../src/setup.js';
+import { setup, orderProviders } from '../src/setup.js';
 import { usageReport } from '../src/usage.js';
 
 test('session ownership rejects a second engine before recovery and reclaims a dead process', async () => {
@@ -48,6 +48,33 @@ test('guided setup saves usable configuration without model JSON and cancellatio
     await assert.rejects(setup(registry, f.home, { ask: async () => 'cancel', print: () => {}, login: async () => {} }), /cancelled/);
     assert.equal(readFileSync(path, 'utf8'), content);
   } finally { await f.close(); }
+});
+
+test('setup steps back on Escape instead of leaving, and still exits on typed cancel', async () => {
+  const f = fixture();
+  try {
+    const registry = { home: f.home, providers: () => [{ id: 'fixture', configured: true, auth: ['api_key'] }, { id: 'other', configured: true, auth: ['api_key'] }], models: (p: string) => [{ id: `${p}-model`, name: 'Example', provider: p }] } as unknown as ProviderRegistry;
+    const back = () => Object.assign(new Error('Cancelled'), { back: true });
+    const picks: (number | 'back')[] = [1, 'back', 0, 0, 'back', 1]; const seen: string[] = []; const inputs = ['P', '', 'n', 'n', 'n', 'y'];
+    await setup(registry, f.home, {
+      ask: async label => { seen.push(label); return inputs.shift()!; }, print: () => {}, login: async () => {},
+      select: async label => { seen.push(label); const pick = picks.shift()!; if (pick === 'back') throw back(); return pick; },
+    });
+    assert.deepEqual(seen.filter(l => /^(Provider|Model|Access)/.test(l)), ['Provider', 'Model', 'Provider', 'Model', 'Access for ' + f.home, 'Access for ' + f.home]);
+    assert.equal(seen.filter(l => l.startsWith('Add another')).length, 2);
+    const agents = JSON.parse(readFileSync(join(f.home, 'agents.json'), 'utf8'));
+    assert.equal(agents.length, 1); assert.equal(agents[0].provider, 'fixture'); assert.equal(agents[0].model, 'fixture-model');
+    const before = readFileSync(join(f.home, 'agents.json'), 'utf8');
+    await assert.rejects(setup(registry, f.home, { ask: async () => 'x', print: () => {}, login: async () => {}, select: async () => { throw new Error('Cancelled'); } }), /Cancelled/);
+    await assert.rejects(setup(registry, f.home, { ask: async () => 'x', print: () => {}, login: async () => {}, select: async () => { throw back(); } }), /Cancelled/);
+    assert.equal(readFileSync(join(f.home, 'agents.json'), 'utf8'), before);
+  } finally { await f.close(); }
+});
+
+test('setup lists configured providers first, then common hosted ones, then the rest alphabetically', () => {
+  const ids = (list: { id: string; configured?: boolean }[]) => orderProviders(list).map(p => p.id);
+  assert.deepEqual(ids([{ id: 'azure' }, { id: 'openrouter' }, { id: 'amazon-bedrock' }, { id: 'anthropic' }, { id: 'zai', configured: true }]), ['zai', 'anthropic', 'openrouter', 'amazon-bedrock', 'azure']);
+  const input = [{ id: 'b' }, { id: 'a' }]; orderProviders(input); assert.deepEqual(input.map(p => p.id), ['b', 'a']);
 });
 
 test('host checkpoints restore content, refuse conflicts and cannot undo failed creation', async () => {

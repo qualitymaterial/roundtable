@@ -32,6 +32,7 @@ export const Limits = z.object({
   providerRequests: z.record(z.string(), z.number().int().positive()).default({}),
 });
 export type SessionRecord = {
+  browserLocal?: import('./browser-policy.js').BrowserPolicy;
   projectInstructions?: { content: string; hash: string; source: string; reviewedAt: string };
   importedProjectInstructions?: { content: string; hash: string; source: string; reviewedAt: string };
   sourceSession?: string;

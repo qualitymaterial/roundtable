@@ -96,6 +96,7 @@ function safeRelative(path: string): string[] {
   return parts;
 }
 export function captureSession(engine: Engine): SessionBundle {
+  if (engine.session().browserLocal) throw new Error('Portable export and forks are disabled for local-only browser sessions in this prototype');
   if (engine.session().state !== 'paused' || (engine.status() as { running: number }).running || engine.jobs.list().some(j => j.state === 'running')) throw new Error('Pause and settle this session before creating a backup or fork');
   const files: z.output<typeof File>[] = []; const excluded: string[] = []; let total = 0;
   const collect = (root: string, area: 'workspace' | 'history', agentId?: string, relative = '') => {

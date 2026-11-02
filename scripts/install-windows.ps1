@@ -19,9 +19,11 @@ $root = [IO.Path]::GetFullPath($InstallRoot)
 $release = Join-Path $root ('releases\' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [guid]::NewGuid().ToString('N').Substring(0,8))
 $bin = Join-Path $root 'bin'
 New-Item -ItemType Directory -Force -Path $release, $bin | Out-Null
-foreach ($entry in @('dist','docs','examples','LICENSE','package.json','package-lock.json')) {
+foreach ($entry in @('dist','docs','examples','companion','LICENSE','package.json','package-lock.json')) {
     Copy-Item -LiteralPath (Join-Path $sourceRoot $entry) -Destination $release -Recurse
 }
+New-Item -ItemType Directory -Path (Join-Path $release 'scripts') -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $sourceRoot 'scripts\install-browser-native-host.ps1') -Destination (Join-Path $release 'scripts')
 Get-ChildItem -LiteralPath $sourceRoot -Filter '*.md' -File | Copy-Item -Destination $release
 Push-Location $release
 try {

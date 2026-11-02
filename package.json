@@ -31,6 +31,8 @@
     "dist",
     "docs",
     "examples",
+    "companion",
+    "scripts/install-browser-native-host.ps1",
     "LICENSE",
     "*.md"
   ],

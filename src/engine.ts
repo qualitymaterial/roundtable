@@ -12,6 +12,8 @@ import { Repository } from './storage.js';
 import { ToolRegistry, installTools } from './tools.js';
 import { installNetworkTools } from './network-tools.js';
 import { WebIntelligence } from './web-intelligence.js';
+import { BrowserEvidence, installBrowserTools } from './browser-evidence.js';
+import { BrowserLocalPolicy, browserPolicyHash, browserModelPin, browserCapabilities, type BrowserPolicy } from './browser-policy.js';
 import type { WebContext } from './web-orchestration.js';
 import { installHostTools, executeHost } from './host-tools.js';
 import { ConnectionPool } from './connections.js';
@@ -29,6 +31,7 @@ export class Engine extends EventEmitter {
   readonly jobs: BackgroundJobs;
   readonly connections: ConnectionPool;
   readonly web: WebIntelligence;
+  readonly browser: BrowserEvidence;
   private adapters = new Map<string, AgentAdapter>();
   private active = new Map<string, Promise<void>>();
   private turnAuthorized = new Map<string, boolean>();
@@ -55,18 +58,31 @@ export class Engine extends EventEmitter {
     for (const job of this.jobs.list().filter(j => j.state === 'interrupted')) this.notify(job.agentId, `job:${job.id}`, `Background job ${job.id} was interrupted by process exit. Inspect its output; do not assume it completed or automatically rerun side effects.`);
     this.connections = new ConnectionPool(dirname(repo.path));
     this.web = new WebIntelligence(repo, sessionId);
+    this.browser = new BrowserEvidence(this, dirname(repo.path));
     this.tools = new ToolRegistry(this); installTools(this.tools); installNetworkTools(this.tools); installHostTools(this.tools); installRecoveryTools(this.tools); installSandboxTools(this.tools); installCodeTools(this.tools);
+    installBrowserTools(this.tools);
   }
-  static create(repo: Repository, workspaceRoot: string, objective: string, options: { stages?: z.input<typeof Stage>[]; projectRoot?: string; limits?: z.input<typeof Limits>; policy?: SessionRecord['policy']; constraints?: string; permissions?: string[] } = {}): SessionRecord {
+  static create(repo: Repository, workspaceRoot: string, objective: string, options: { browserLocal?: z.input<typeof BrowserLocalPolicy>; stages?: z.input<typeof Stage>[]; projectRoot?: string; limits?: z.input<typeof Limits>; policy?: SessionRecord['policy']; constraints?: string; permissions?: string[] } = {}): SessionRecord {
     if (!objective.trim() || objective.length > 12000) throw new Error('Objective must be 1–12000 characters');
+    const local = options.browserLocal ? BrowserLocalPolicy.parse(options.browserLocal) : undefined;
     const sessionId = id(); const workspace = resolve(workspaceRoot, sessionId); mkdirSync(workspace, { recursive: true });
     const record: SessionRecord = { id: sessionId, projectRoot: realpathSync(options.projectRoot ?? workspace), objective: redact(objective), policy: options.policy ?? 'goal', constraints: options.constraints ?? '', createdAt: timestamp(), state: 'active', workspace,
       permissions: options.permissions ?? ['collaborate', 'memory', 'artifact', 'workspace.read', 'workspace.write', 'git.read', 'execute.container', 'network.research', 'mcp.remote'], limits: Limits.parse(options.limits ?? {}),
       usage: { exchanges: 0, toolCalls: 0, requests: 0, tokens: 0, dollars: 0 }, providerRequests: {} };
     if (options.stages?.length) record.workflow = { stages: validateStages(options.stages), index: 0, ready: [], startedAt: timestamp(), artifactIds: [], history: [] };
-    repo.put('session', record); repo.event(sessionId, 'session_created', record); return record;
+    if (local) { record.browserLocal = local; record.permissions = [...browserCapabilities]; }
+    repo.transaction(() => { repo.put('session', record); if (local) { const seal = { id: sessionId, sessionId, hash: browserPolicyHash(local) }; repo.put('browser_policy', seal); } repo.event(sessionId, 'session_created', record); }); return record;
   }
-  session(): SessionRecord { const record = this.repo.get<SessionRecord>('session', this.sessionId); if (!record) throw new Error('Session not found'); return record; }
+  session(): SessionRecord {
+    const record = this.repo.get<SessionRecord>('session', this.sessionId); if (!record) throw new Error('Session not found');
+    const seal = this.repo.get<{ hash: string }>('browser_policy', this.sessionId);
+    if (record.browserLocal || seal) {
+      if (!record.browserLocal || !seal) throw new Error('Local-only browser policy is missing; no model work is allowed');
+      const policy: BrowserPolicy = BrowserLocalPolicy.parse(record.browserLocal);
+      if (browserPolicyHash(policy) !== seal.hash) throw new Error('Local-only browser model pins failed integrity validation');
+    }
+    return record;
+  }
   agents(): AgentRecord[] { return this.repo.list<AgentRecord>('agent', this.sessionId); }
   status(): unknown { return { ...this.session(), agents: this.agents(), deliveries: this.repo.deliveries(this.sessionId, ['pending', 'inflight', 'failed']), running: this.active.size }; }
   context(agentId: string): unknown { return this.adapters.get(agentId)?.context?.() ?? { available: false }; }
@@ -80,6 +96,9 @@ export class Engine extends EventEmitter {
   }
   authorized(agent: AgentRecord, permission: string): boolean {
     const current = this.repo.get<AgentRecord>('agent', agent.id);
+    const local = this.session().browserLocal;
+    if (permission === 'browser.read' && !local) return false;
+    if (local && (!browserCapabilities.has(permission) || !local.models.some(p => p.provider === current?.provider && p.model === current.model))) return false;
     return current?.sessionId === this.sessionId && current.state === 'active' && current.permissions.includes(permission) && this.session().permissions.includes(permission);
   }
   consume(metric: keyof SessionRecord['usage'], amount = 1, admission = false): void {
@@ -95,6 +114,7 @@ export class Engine extends EventEmitter {
   }
   request(agent: AgentRecord, admission = false): void {
     const session = this.session(); const count = session.providerRequests?.[agent.provider] ?? 0;
+    if (session.browserLocal) browserModelPin(session.browserLocal, agent.provider, agent.model);
     const tokensReached = session.limits.tokens !== null && session.usage.tokens >= session.limits.tokens;
     if (tokensReached || session.usage.dollars >= session.limits.dollars) {
       const reason = budgetReason(session, tokensReached ? 'tokens' : 'dollars');
@@ -144,6 +164,7 @@ export class Engine extends EventEmitter {
   }
   async addAgent(input: z.input<typeof AgentInput>, validate = true): Promise<AgentRecord> {
     const parsed = AgentInput.parse(input);
+    const local = this.session().browserLocal; if (local) browserModelPin(local, parsed.provider, parsed.model);
     if (parsed.id && this.repo.get('agent', parsed.id)) throw new Error('Agent ID already exists');
     if (this.agents().filter(a => a.state !== 'removed').length >= 64) throw new Error('Session membership limit reached');
     const agent: AgentRecord = { ...parsed, instructions: redact(parsed.instructions), id: parsed.id ?? id(), sessionId: this.sessionId, state: 'active', compatible: false };
@@ -214,6 +235,7 @@ export class Engine extends EventEmitter {
     });
   }
   async changeModel(agentId: string, provider: string, model: string, controls: Pick<AgentRecord, 'effort' | 'maxOutputTokens' | 'contextWindowTokens'> = {}): Promise<void> {
+    const local = this.session().browserLocal; if (local) browserModelPin(local, provider, model);
     const old = this.agents().find(a => a.id === agentId && a.state !== 'removed');
     if (!old) throw new Error('Unknown participant');
     if (this.active.has(agentId)) throw new Error('Participant is busy. Pause it or wait for the response before changing models.');
@@ -493,9 +515,11 @@ export class Engine extends EventEmitter {
       if (Date.now() - start > timeoutMs) throw new Error('Timed out waiting for collaboration');
     }
   }
-  export(): unknown { return { session: this.session(), agents: this.agents(), messages: this.repo.messages(this.sessionId, undefined, Number.MAX_SAFE_INTEGER), deliveries: this.repo.deliveries(this.sessionId, ['pending', 'inflight', 'acknowledged', 'failed', 'cancelled']), tasks: this.repo.list('task', this.sessionId), artifacts: this.repo.list('artifact', this.sessionId), notes: this.repo.list('note', this.sessionId), approvals: this.repo.list('approval', this.sessionId), events: this.repo.events(this.sessionId) }; }
+  export(): unknown { if (this.session().browserLocal) throw new Error('Export is disabled for local-only browser sessions in this prototype'); return { session: this.session(), agents: this.agents(), messages: this.repo.messages(this.sessionId, undefined, Number.MAX_SAFE_INTEGER), deliveries: this.repo.deliveries(this.sessionId, ['pending', 'inflight', 'acknowledged', 'failed', 'cancelled']), tasks: this.repo.list('task', this.sessionId), artifacts: this.repo.list('artifact', this.sessionId), notes: this.repo.list('note', this.sessionId), approvals: this.repo.list('approval', this.sessionId), events: this.repo.events(this.sessionId) }; }
   async close(): Promise<void> {
-    this.closing = true; clearTimeout(this.sessionTimer); await Promise.all([...this.adapters.values()].map(a => a.abort()).concat(this.jobs.close()));
+    this.closing = true; clearTimeout(this.sessionTimer);
+    await this.browser.close();
+    await Promise.all([...this.adapters.values()].map(a => a.abort()).concat(this.jobs.close()));
     await Promise.all(this.active.values()); for (const adapter of this.adapters.values()) adapter.dispose(); this.adapters.clear();
     await this.connections.close();
     this.releaseOwnership?.(); this.releaseOwnership = undefined;

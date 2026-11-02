@@ -2,6 +2,7 @@ import { assertTaskEvidence, taskEvidenceStatus } from './verification-gate.js';
 import { researchConfig } from './research.js';
 import { WebError } from './web-types.js';
 import { assertWebAccess } from './web-tools.js';
+import { browserTools } from './browser-policy.js';
 import { taskValidation } from './recovery.js';
 import { assertCodeComplete, workKey } from './code-work.js';
 import { Type, type Static, type TSchema } from 'typebox';
@@ -44,6 +45,8 @@ export class ToolRegistry implements ToolExecutor {
   remove(name: string): void { this.entries.delete(name); }
   wireName(name: string): string { return name.replaceAll('.', '__'); }
   private configured(name: string): boolean {
+    if (this.engine.session().browserLocal && !browserTools.has(name)) return false;
+    if (name.startsWith('browser.')) return !!this.engine.session().browserLocal;
     if (name.startsWith('web.')) { try { return this.engine.web.config().enabled; } catch { return false; } }
     if (name.startsWith('container_')) return Boolean(process.env.ROUNDTABLE_CONTAINER_IMAGE);
     if (name === 'web_search') return Boolean(researchConfig(dirname(this.engine.repo.path)).searchUrl);
@@ -61,6 +64,7 @@ export class ToolRegistry implements ToolExecutor {
   isExecuting(operationId: string): boolean { return this.pending.has(operationId); }
   names(): string[] { return [...this.entries.keys()]; }
   async execute(agent: AgentRecord, name: string, args: unknown, callId: string, signal?: AbortSignal): Promise<unknown> {
+    if (this.engine.session().browserLocal && !browserTools.has(name)) return { ok: false, data: 'This tool is excluded by the local-only browser session policy' };
     const key = `${agent.sessionId}:${agent.id}:${callId}`;
     const fingerprint = this.fingerprint(name, args);
     const existing = this.pending.get(key); if (existing) return existing.fingerprint === fingerprint ? existing.promise : { ok: false, data: 'Tool call ID collision' };

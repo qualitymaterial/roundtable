@@ -14,6 +14,7 @@ import { pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import { Repository } from './storage.js';
 import { Engine } from './engine.js';
+import { localBaseUrl } from './browser-policy.js';
 import { ProviderRegistry } from './providers.js';
 import { PiAdapter } from './pi-adapter.js';
 import { verifyCollaboration } from './acceptance.js';
@@ -58,7 +59,7 @@ function projectAccessEnabled(): boolean {
   const path = join(home, 'preferences.json');
   return existsSync(path) ? z.object({ projectAccess: z.boolean() }).strict().parse(JSON.parse(readFileSync(path, 'utf8'))).projectAccess : userConfig?.projectAccess ?? false;
 }
-const inkMode = Boolean(stdin.isTTY && stdout.isTTY) && !process.argv.includes('--json') && (!process.argv[2] || ['setup', 'settings', 'login', 'endpoints', 'diagnostics', 'favorites', 'providers', 'models', 'workflow', 'demo', 'runtime'].includes(process.argv[2]) || process.argv[2] === 'session' && ['new', 'resume'].includes(process.argv[3] ?? ''));
+const inkMode = Boolean(stdin.isTTY && stdout.isTTY) && !process.argv.includes('--json') && (!process.argv[2] || ['setup', 'settings', 'login', 'endpoints', 'diagnostics', 'favorites', 'providers', 'models', 'workflow', 'demo', 'runtime', 'browser'].includes(process.argv[2]) || process.argv[2] === 'session' && ['new', 'resume'].includes(process.argv[3] ?? ''));
 const ui = inkMode ? new InkTerminal(readSettings(home).view) : new TerminalUI(stdout, Boolean(stdout.isTTY), Boolean(stdout.isTTY) && !('NO_COLOR' in process.env), process.env.ROUNDTABLE_ASCII === '1', readSettings(home).view);
 const print = (value: unknown) => ui.print(value);
 const menu = (title: string, rows: string[], hint?: string) => ui.menu(title, rows, hint);
@@ -93,6 +94,15 @@ function transcript(engine?: Engine, repo?: Repository): (activity: unknown) => 
   };
 }
 const help = `Roundtable — independent agents, shared objectives
+
+Start here:
+  roundtable                 Open the conversation; first run offers setup or a demo
+  roundtable demo            Watch three mock agents collaborate (no account, no cost)
+  roundtable setup           Choose a provider, model and folder access
+  /work <brief>              Inside a session: assign coding work to the team
+  /commands                  Inside a session: search every command
+Everything below is the full reference.
+
 roundtable [--agents config.json]   Start with saved agents; live admission uses provider requests
 roundtable init | doctor | providers | models [provider] | login <provider> [oauth|api_key]
 roundtable evaluate <comparison.json>   Compare recorded solo/team runs without inference
@@ -101,6 +111,7 @@ roundtable setup | settings      Guided setup and saved configuration
 roundtable workflows | workflow <name-or-json-file> [--agents config.json]
 roundtable releases | rollback <installed-release-id>   Windows standalone releases
 roundtable run <objective> --agents config.json   Headless newline-delimited JSON events
+roundtable browser [objective]  (read-only local-only browser session)
 roundtable session new <objective> [--agents config.json]
 roundtable session list | resume [id] | export <id> [path]
 roundtable session backup <id> <path> | import <path> [project-folder]
@@ -163,15 +174,26 @@ Use @path or @"path with spaces" to attach project files; Tab completes paths.
 /host | /host-read <absolute-folder> | /host-write <absolute-folder>
 /host-shell on|off | /host-off | /save-access
 /grant <agent-id> <capability> | /revoke <agent-id> <capability>
+/browser status | sources | read [source-id]
 /export [path] | /save-agents | /load-tool <trusted-module-path> | /help | /exit
 Example /add-agent {"name":"My agent","provider":"openrouter","model":"ID from /models","instructions":"Choose your own approach"}`;
 
 async function login(registry: ProviderRegistry, provider?: string, type?: string, existing?: TerminalInput): Promise<void> {
   if (!existing && ui instanceof InkTerminal) ui.banner(process.cwd(), home);
   const input = existing ?? terminalInput(); const abort = new AbortController();
-  const cancel = () => abort.abort(); input.rl.on('SIGINT', cancel); input.rl.on('close', cancel);
-  try { await loginFlow(registry, { select: input.select, ask: (label, secret, signal) => input.ask(label, secret, AbortSignal.any([abort.signal, ...(signal ? [signal] : [])])), print, menu }, provider, type, readSettings(home).openBrowser, undefined, abort.signal); }
-  finally { input.rl.off('SIGINT', cancel); input.rl.off('close', cancel); if (!existing) input.rl.close(); }
+  // Escape or Ctrl+C while waiting for the browser abandons this sign-in and reports "back" so callers
+  // can return to their provider list; the wait itself is raced so a provider that ignores the signal cannot trap the user.
+  let interrupted = false;
+  const cancel = () => abort.abort(); const interrupt = () => { interrupted = true; abort.abort(); };
+  input.rl.on('SIGINT', interrupt); input.rl.on('ESCAPE', interrupt); input.rl.on('close', cancel);
+  const stopped = new Promise<never>((_, reject) => abort.signal.addEventListener('abort', () => reject(Object.assign(new Error('Cancelled'), { back: interrupted })), { once: true }));
+  stopped.catch(() => {});
+  try {
+    const flow = loginFlow(registry, { select: input.select, ask: (label, secret, signal) => input.ask(label, secret, AbortSignal.any([abort.signal, ...(signal ? [signal] : [])])), print, menu }, provider, type, readSettings(home).openBrowser, undefined, abort.signal);
+    flow.catch(() => {});
+    await Promise.race([flow, stopped]);
+  } catch (error) { if (interrupted) throw Object.assign(new Error('Cancelled'), { back: true }); throw error; }
+  finally { input.rl.off('SIGINT', interrupt); input.rl.off('ESCAPE', interrupt); input.rl.off('close', cancel); if (!existing) input.rl.close(); }
 }
 function terminalInput(): TerminalInput {
   const commands = () => [...new Set(help.match(/\/[a-z-]+/g)), ...new Skills(home).list().filter(s => s.enabled).map(s => `/skill:${s.name}`)];
@@ -291,14 +313,15 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
   };
   try {
     if (inspectOnly && engine.session().state === 'active') await engine.pause('Opened for inspection. Use /resume to connect and continue.');
+    if (engine.session().browserLocal) { await engine.browser.start(); print('Local-only browser session. Connect the companion, then explicitly share a tab. /browser read inspects the snapshot. Only pinned loopback models may connect; use /add-agent with browser.read permission.'); }
     repo.event(sessionId, 'human_session_opened', {});
     ui.banner(projectFolder ?? engine.session().projectRoot ?? process.cwd(), home); ui.session(engine.session());
     const initial = engine.session();
     if ((new ProjectProfiles(home, projectRoot).read()?.instructions || initial.importedProjectInstructions) && !initial.projectInstructions) print('Saved project instructions are available. /project lets you inspect and apply their snapshot.');
     if (!ui.compact) print(`Session limits: tokens ${initial.limits.tokens ?? 'off'}, estimated cost $${initial.limits.dollars}, requests ${initial.limits.requests}, tools ${initial.limits.toolCalls}. /budget shows all limits.`);
     const accessPath = join(home, 'host-access.json');
-    if (!engine.session().sourceSession && !engine.session().hostAccess && existsSync(accessPath)) await configureHost(engine, JSON.parse(readFileSync(accessPath, 'utf8')), true);
-    if (projectFolder && projectAccessEnabled()) {
+    if (!engine.session().browserLocal && !engine.session().sourceSession && !engine.session().hostAccess && existsSync(accessPath)) await configureHost(engine, JSON.parse(readFileSync(accessPath, 'utf8')), true);
+    if (!engine.session().browserLocal && projectFolder && projectAccessEnabled()) {
       const policy = HostAccess.parse(engine.session().hostAccess ?? {}); policy.writeRoots.push(projectFolder); await configureHost(engine, policy, true);
     }
     ui.startupAccess(HostAccess.parse(engine.session().hostAccess ?? {}));
@@ -349,6 +372,14 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
       const reference = /^(?:"([^"]+)"|(\S+))(?:\s+(.*))?$/s.exec(rest);
       const target = reference?.[1] ?? reference?.[2] ?? ''; const targetRest = reference?.[3] ?? '';
         if (command === '/exit') break;
+        if (command === '/browser') {
+          if (!engine.session().browserLocal) throw new Error('Start roundtable browser for a dedicated local-only session');
+          if (!rest || words[0] === 'status') print(engine.browser.status());
+          else if (words[0] === 'sources') print(engine.browser.sources());
+          else if (words[0] === 'read') print(engine.browser.read(words[1]));
+          else throw new Error('Use /browser status | sources | read [source-id]');
+          continue;
+        }
         if (command === '/sessions') {
           const selected = await sessionPicker(repo, menuIO, sessionId);
           if (selected === sessionId) { print('Already in this session.'); continue; }
@@ -750,6 +781,7 @@ async function interactive(repo: Repository, registry: ProviderRegistry, session
           }
           case '/export': { const path = resolve(rest || `roundtable-${sessionId}.json`); writeFileSync(path, JSON.stringify(engine.export(), null, 2)); print(path); break; }
           case '/load-tool': {
+            if (engine.session().browserLocal) throw new Error('Loading arbitrary host modules is disabled in local-only browser sessions');
             const module = await import(pathToFileURL(resolve(rest)).href) as { default: ToolProvider };
             if (!module.default || typeof module.default.register !== 'function') throw new Error('Module must export a ToolProvider as default');
             module.default.register(engine.tools); repo.event(sessionId, 'trusted_tool_provider_loaded', { path: resolve(rest) });
@@ -804,8 +836,7 @@ async function main(): Promise<void> {
       if (!existsSync(path)) writeFileSync(path, JSON.stringify([{ provider: 'local', baseUrl: 'http://127.0.0.1:1234/v1', model: 'REPLACE_WITH_SERVER_MODEL_ID', apiKeyEnv: 'LOCAL_API_KEY', contextWindow: 32000, maxTokens: 4096 }], null, 2));
       print(`Initialized ${home}. Database and private credentials stay here. See docs/PROVIDERS.md.`); return;
     }
-    if (command === 'demo' && subcommand !== '--live') {
-      if (ui instanceof InkTerminal) ui.banner(process.cwd(), home);
+    const showDemo = async (): Promise<void> => {
       print('DETERMINISTIC MOCK DEMO — three independent Pi sessions; no live inference.');
       const result = await runDemo(repo, home, transcript(undefined, repo));
       const acceptance = verifyCollaboration(repo, result.sessionId, home);
@@ -814,7 +845,11 @@ async function main(): Promise<void> {
         `Session: ${result.sessionId}`, `Resume: roundtable session resume ${result.sessionId}`, 'Deterministic models; no hosted inference was used.',
       ]); else print({ ...result, acceptance });
       if (!acceptance.passed) throw new Error('Deterministic collaboration acceptance failed');
-      repo.event(result.sessionId, 'collaboration_acceptance', acceptance); return;
+      repo.event(result.sessionId, 'collaboration_acceptance', acceptance);
+    };
+    if (command === 'demo' && subcommand !== '--live') {
+      if (ui instanceof InkTerminal) ui.banner(process.cwd(), home);
+      await showDemo(); return;
     }
     if (command === 'session' && subcommand === 'verify') {
       const acceptance = verifyCollaboration(repo, args[2]!, home); print(acceptance);
@@ -920,12 +955,31 @@ async function main(): Promise<void> {
     }
     let sessionId: string; let input: TerminalInput | undefined;
     ui.banner(process.cwd(), home);
-    let configs = command === 'session' && subcommand === 'resume' ? [] : startupAgents(registry, configPath);
-    if (!command && stdin.isTTY && !configs.length) { await guidedSetup(registry); configs = startupAgents(registry, configPath); }
+    let configs = command === 'browser' || command === 'session' && subcommand === 'resume' ? [] : startupAgents(registry, configPath);
+    if (!command && stdin.isTTY && !configs.length) {
+      while (true) {
+        const first = terminalInput();
+        let tryDemo = false;
+        try { tryDemo = await first.select?.('No participants are configured yet', ['Set up a model provider', 'Try the demo first (no account needed; deterministic models)']) === 1; }
+        finally { first.rl.close(); }
+        if (tryDemo) { await showDemo(); print('Run roundtable again and choose "Set up a model provider" when you are ready for live models.'); return; }
+        // Escape on setup's first screen returns to this menu instead of leaving.
+        try { await guidedSetup(registry); break; } catch (error) { if ((error as { back?: boolean }).back !== true) throw error; }
+      }
+      configs = startupAgents(registry, configPath);
+    }
     if (command === 'session' && subcommand === 'resume') {
       input = terminalInput();
       try { sessionId = args[2] ?? await sessionPicker(repo, { ask: input.ask, askValidated: input.askValidated, select: input.select, print, menu }); }
       catch (error) { input.rl.close(); throw error; }
+    }
+    else if (command === 'browser') {
+      const models = registry.endpoints().flatMap(endpoint => {
+        try { const baseUrl = localBaseUrl(endpoint.baseUrl); return [endpoint.model, ...endpoint.models.map(m => m.id)].map(model => ({ provider: endpoint.provider, model, baseUrl })); }
+        catch { return []; }
+      });
+      sessionId = createSession(repo, args.slice(1).join(' ') || 'Inspect explicitly shared browser snapshots with local models', { browserLocal: { models } }).id;
+      if (!models.length) print('No literal-loopback model is configured. You can capture and inspect pages now. Configure a local endpoint and create a new browser session before connecting a model.');
     }
     else if (command === 'session' && subcommand === 'new') sessionId = createSession(repo, args.slice(2).join(' ') || 'Explore a shared objective').id;
     else if (command === 'workflow') { if (!subcommand) throw new Error('Use roundtable workflow <name-or-json-file>'); const recipe = loadWorkflow(subcommand); sessionId = createSession(repo, recipe.objective, { policy: recipe.policy, constraints: recipe.constraints, stages: recipe.stages }).id; print(`Workflow: ${recipe.name}\n${recipe.constraints}\nEnter your concrete brief to start.`); }

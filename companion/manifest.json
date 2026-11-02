@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "Roundtable Companion",
+  "version": "0.1.0",
+  "description": "Explicitly share a selected page with your local-only Roundtable session.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEApXXqHcAv52bo2uQNKmOOWvsV3GaYioojgJ90StNestB7gk6/J8nGkLF5CzrUl30LFutHy/OYhOmUBpEkQQGwYgNF8myY1E62jvOSCSVNVdx4aOWYPhmms0ETamYETo6QH1qmhst4mCsFMs5JOfldhLMVn7au9X/bCq8oNciIJ/gMtS7gAzFJlRDQNA/GuNNDGflPUzbRSyzV998VMAORz6xtCQNHgdX2s49tXMV1ze0Xf0KTLZh8y5x8vNt9FBrk7xq+v3u/ONycw43cfg2u4+YcuVNyyz5gucpW1LJEscjHz59g//bma7bb4+4JDiZ6rbr+RTIxWhtYuj4muBSE7QIDAQAB",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "nativeMessaging"
+  ],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Share a page with Roundtable",
+    "default_popup": "popup.html"
+  },
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'"
+  }
+}
