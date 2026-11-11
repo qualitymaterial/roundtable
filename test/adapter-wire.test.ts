@@ -2,7 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { fixture } from './helpers.js';
+import { completionReport } from '../src/completion.js';
+import { Engine } from '../src/engine.js';
+import { compareSessions } from '../src/evaluation.js';
+import { requireValidation, validateContract } from '../src/recovery.js';
+import type { Artifact, Message, Task } from '../src/domain.js';
 import { saveResearch } from '../src/research.js';
 import { MockSearchProvider } from '../src/web-providers.js';
 import { WebConfig } from '../src/web-types.js';
@@ -14,6 +21,7 @@ import { PiAdapter } from '../src/pi-adapter.js';
 type Call = { name: string; args: unknown };
 type Turn = { protocol: 'openai' | 'anthropic'; model: string; tools: string[]; user: string; results: { text: string; error: boolean }[] };
 type Reply = { text: string } | { call: Call };
+type WireReply = Reply | { unauthorized: true };
 const rows = [{ url: 'https://example.com/page', title: 'A title', snippet: 'A source excerpt' }];
 
 function script(turn: Turn): Reply {
@@ -55,13 +63,13 @@ function sse(res: ServerResponse, events: [string | undefined, unknown][]) {
 function openAIStream(res: ServerResponse, model: string, reply: Reply) {
   const chunk = (delta: unknown, finish: string | null) => ({ id: 'c1', object: 'chat.completion.chunk', created: 1, model, choices: [{ index: 0, delta, finish_reason: finish }] });
   const events: [undefined, unknown][] = 'call' in reply
-    ? [[undefined, chunk({ role: 'assistant', tool_calls: [{ index: 0, id: `call_${Date.now()}`, type: 'function', function: { name: reply.call.name, arguments: '' } }] }, null)],
+    ? [[undefined, chunk({ role: 'assistant', tool_calls: [{ index: 0, id: `call_${randomUUID()}`, type: 'function', function: { name: reply.call.name, arguments: '' } }] }, null)],
       [undefined, chunk({ tool_calls: [{ index: 0, function: { arguments: JSON.stringify(reply.call.args) } }] }, null)], [undefined, chunk({}, 'tool_calls')]]
     : [[undefined, chunk({ role: 'assistant', content: reply.text }, null)], [undefined, chunk({}, 'stop')]];
   sse(res, [...events, [undefined, { id: 'c1', object: 'chat.completion.chunk', created: 1, model, choices: [], usage: { prompt_tokens: 3, completion_tokens: 2, total_tokens: 5 } }], [undefined, '[DONE]']]);
 }
 function anthropicStream(res: ServerResponse, model: string, reply: Reply) {
-  const block = 'call' in reply ? { type: 'tool_use', id: `toolu_${Date.now()}`, name: reply.call.name, input: {} } : { type: 'text', text: '' };
+  const block = 'call' in reply ? { type: 'tool_use', id: `toolu_${randomUUID()}`, name: reply.call.name, input: {} } : { type: 'text', text: '' };
   const delta = 'call' in reply ? { type: 'input_json_delta', partial_json: JSON.stringify(reply.call.args) } : { type: 'text_delta', text: reply.text };
   sse(res, [['message_start', { type: 'message_start', message: { id: 'msg_1', type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 3, output_tokens: 0 } } }],
     ['content_block_start', { type: 'content_block_start', index: 0, content_block: block }], ['content_block_delta', { type: 'content_block_delta', index: 0, delta }],
@@ -69,24 +77,203 @@ function anthropicStream(res: ServerResponse, model: string, reply: Reply) {
     ['message_stop', { type: 'message_stop' }]]);
 }
 
-async function wire(reply: (turn: Turn) => Reply) {
+async function wire(reply: (turn: Turn) => WireReply) {
   const turns: Turn[] = []; const auth: string[] = [];
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     let raw = ''; req.on('data', c => { raw += c; }); req.on('end', () => {
       const body = JSON.parse(raw) as Record<string, unknown>; const path = new URL(req.url ?? '/', 'http://x').pathname; auth.push(String(req.headers.authorization ?? req.headers['x-api-key'] ?? ''));
-      if (path.endsWith('/chat/completions')) { const turn = parseOpenAI(body); turns.push(turn); return openAIStream(res, turn.model, reply(turn)); }
-      if (path.endsWith('/messages')) { const turn = parseAnthropic(body); turns.push(turn); return anthropicStream(res, turn.model, reply(turn)); }
-      res.writeHead(404).end();
+      const openAI = path.endsWith('/chat/completions');
+      if (!openAI && !path.endsWith('/messages')) { res.writeHead(404).end(); return; }
+      const turn = openAI ? parseOpenAI(body) : parseAnthropic(body); turns.push(turn);
+      const response = reply(turn);
+      if ('unauthorized' in response) {
+        res.writeHead(401, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ type: 'error', error: { type: 'authentication_error', message: 'Fixture authentication expired' } }));
+      } else if (openAI) openAIStream(res, turn.model, response);
+      else anthropicStream(res, turn.model, response);
     });
   });
   await new Promise<void>(r => server.listen(0, '127.0.0.1', r)); const address = server.address(); assert.ok(address && typeof address === 'object');
   return { turns, auth, base: `http://127.0.0.1:${address.port}`, close: async () => { server.closeAllConnections(); await new Promise<void>(r => server.close(() => r())); } };
 }
-function cloud(registry: ProviderRegistry, base: string) {
+function cloud(registry: ProviderRegistry, base: string, provider = 'cloud-anthropic') {
   // Established cloud adapter (Anthropic Messages) pointed at loopback; the key is a fixture value.
-  registry.runtime.registerProvider('cloud-anthropic', { baseUrl: base, api: 'anthropic-messages', apiKey: 'fixture-anthropic-key',
+  registry.runtime.registerProvider(provider, { baseUrl: base, api: 'anthropic-messages', apiKey: 'fixture-anthropic-key',
     models: [{ id: 'cloud-model', name: 'Cloud fixture', reasoning: false, input: ['text'], contextWindow: 100000, maxTokens: 1000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } }] });
 }
+
+const collaborationObjective = 'Deliver a verified receipt for 6 × 7.';
+const receiptName = 'receipt.json';
+const reviewBody = 'Check the attached receipt against the task contract.';
+const kickoff = 'Produce the receipt, get the independent check, and close the task.';
+type Scenario = 'solo' | 'team' | 'retry' | 'recovery';
+type Incoming = Pick<Message, 'id' | 'sender' | 'body' | 'taskId' | 'artifacts' | 'correlationId'>;
+
+function collaborationScript(scenario: Scenario, reviewerId?: string) {
+  let failOnce = scenario === 'retry';
+  return (turn: Turn): WireReply => {
+    if (turn.user.includes('Compatibility test.')) return script(turn);
+    const { incoming } = JSON.parse(turn.user) as { incoming: Incoming };
+    const { taskId } = incoming;
+    const result = (index: number) => JSON.parse(turn.results[index]!.text);
+    const call = (name: string, args: unknown): Reply => ({ call: { name, args } });
+    const wait = (mode: 'human' | 'peers') => call('roundtable_wait', { mode });
+    const done = (reply: string): Reply => ({ text: reply });
+    const step = turn.results.length;
+    if (turn.protocol === 'anthropic') {
+      if (failOnce) { failOnce = false; return { unauthorized: true }; }
+      const artifactId = incoming.artifacts[0];
+      if (step === 0) return call('roundtable_artifact_read', { artifactId });
+      if (step === 1) return call('roundtable_task_requirements', { taskId });
+      if (step === 2) return call('roundtable_validation_run', { contractId: result(1).data[0].contract.id, artifactId: result(0).data.id });
+      if (step === 3) return call('roundtable_send', {
+        type: 'task_response', recipients: [incoming.sender], expectsReply: true, taskId,
+        correlationId: incoming.id, artifacts: [artifactId], body: result(2).data.passed ? 'Receipt passed.' : 'Receipt failed. Correct the total and resubmit.',
+      });
+      return done('Review sent.');
+    }
+    if (incoming.body === 'Receipt passed.') {
+      if (step === 0) return call('roundtable_task_update', { taskId, state: 'done', findings: 'Independent contract passed.' });
+      if (step === 1 && result(0).ok) return wait('human');
+      return done('Complete.');
+    }
+    if (incoming.body === kickoff && step === 0) return call('roundtable_task_claim', { taskId });
+    const initial = incoming.body === kickoff;
+    if (initial && step === 1) return call('workspace_write', { path: 'calculation.txt', content: '6 × 7' });
+    const action = step - (initial ? 2 : 0);
+    const content = JSON.stringify({ total: scenario === 'recovery' && initial ? 41 : 42 });
+    if (action === 0) return call('data_json_validate', { content });
+    if (action === 1) return call('roundtable_artifact_publish', { name: receiptName, content, provenance: 'Scripted arithmetic receipt' });
+    if (action === 2 && reviewerId) return call('roundtable_send', {
+      type: 'task_request', recipients: [reviewerId], taskId, artifacts: [result(step - 1).data.id], body: reviewBody,
+    });
+    if (action === 2 || action === 3) return wait(reviewerId ? 'peers' : 'human');
+    return done('Awaiting review.');
+  };
+}
+
+test('matched solo and local/cloud workflows deliver the same receipt, including recovered team runs', async t => {
+  // Each run uses real Pi adapters and its own durable session. Only model outputs are scripted.
+  let handler: (turn: Turn) => WireReply = script;
+  const modelWire = await wire(turn => handler(turn));
+  let registry: ProviderRegistry;
+  const factory = (actor: Parameters<typeof PiAdapter.create>[1], engine: Engine) => PiAdapter.create(registry, actor, engine);
+  const f = fixture(factory);
+  const permissions = ['collaborate', 'artifact', 'workspace.write'];
+  const engines = new Set<Engine>();
+  try {
+    registry = await ProviderRegistry.create(f.home);
+    registry.addEndpoint({ provider: 'mock-local', baseUrl: `${modelWire.base}/v1`, model: 'local-model', contextWindow: 100000, maxTokens: 1000 });
+    cloud(registry, modelWire.base, 'mock-cloud');
+    const run = async (scenario: Scenario) => {
+      const session = Engine.create(f.repo, join(f.home, 'comparison'), collaborationObjective, { permissions });
+      let engine = new Engine(f.repo, session.id, factory); engines.add(engine);
+      const task: Task = { id: randomUUID(), sessionId: session.id, title: 'Deliver receipt', state: 'open', findings: '', dependencies: [] };
+      f.repo.put('task', task);
+      const contract = requireValidation(engine, {
+        taskId: task.id, artifactName: receiptName, description: 'Receipt total equals 42',
+        validator: { kind: 'json', required: ['total'], equals: { total: 42 } },
+      });
+      const local = await engine.addAgent({ name: 'Local', provider: 'mock-local', model: 'local-model', permissions });
+      const reviewer = scenario === 'solo' ? undefined : await engine.addAgent({
+        name: 'Cloud', provider: 'mock-cloud', model: 'cloud-model', permissions: ['collaborate', 'artifact'],
+      });
+      handler = collaborationScript(scenario, reviewer?.id);
+      const human = (body: string) => engine.send({ sessionId: session.id, sender: 'human', recipients: [local.id], type: 'human', taskId: task.id, body });
+      const artifacts = () => f.repo.list<Artifact>('artifact', session.id);
+      human(kickoff);
+      await engine.idle();
+      if (scenario === 'solo') {
+        // The baseline's oracle stays independent; the solo agent cannot verify its own receipt.
+        assert.equal((await validateContract(engine, contract.id, artifacts()[0]!.id, 'human')).passed, true);
+        human('Receipt passed.');
+        await engine.idle();
+      }
+      if (scenario === 'retry') {
+        const [failure] = f.repo.deliveries(session.id, ['failed']);
+        assert.equal(failure?.agentId, reviewer!.id);
+        assert.equal(failure?.attempts, 1);
+        assert.match(failure?.error ?? '', /401|authentication/i);
+        assert.equal(completionReport(engine).outstandingTasks[0]?.id, task.id);
+        await engine.close(); engines.delete(engine);
+        engine = new Engine(f.repo, session.id, factory); engines.add(engine);
+        await engine.connect(); await engine.idle();
+        assert.deepEqual(f.repo.deliveries(session.id, ['failed']), [failure], 'Reopen must preserve failure without replay');
+        engine.retryFailed(); await engine.idle();
+        const retried = f.repo.deliveries(session.id, ['acknowledged']).find(d => d.messageId === failure?.messageId);
+        assert.equal(retried?.attempts, 2);
+      }
+      if (scenario === 'recovery') {
+        const requests = f.repo.messages(session.id).filter(m => m.type === 'task_request');
+        assert.deepEqual(requests.map(m => m.body), [reviewBody, reviewBody]);
+        assert.deepEqual(requests.map(m => m.artifacts[0]), artifacts().map(a => a.id));
+      }
+      const report = completionReport(engine);
+      assert.deepEqual(report.deliveries, []);
+      assert.equal(report.state, 'idle', JSON.stringify(report.failures));
+      assert.equal(report.completedTasks[0]?.id, task.id);
+      assert.equal(report.outstandingTasks.length, 0);
+      const artifact = artifacts().at(-1)!;
+      assert.equal(artifact.author, local.id);
+      assert.deepEqual(JSON.parse(artifact.content), { total: 42 });
+      assert.equal(readFileSync(join(session.workspace, 'calculation.txt'), 'utf8'), '6 × 7');
+      const events = f.repo.events(session.id);
+      const checks = events.filter(e => e.type === 'required_validation_result').map(e => e.data as { reviewer: string; artifactId: string; hash: string; passed: boolean });
+      assert.deepEqual(checks.map(c => c.passed), scenario === 'recovery' ? [false, true] : [true]);
+      assert.equal(checks.at(-1)?.reviewer, reviewer?.id ?? 'human');
+      assert.equal(checks.at(-1)?.artifactId, artifact.id);
+      assert.equal(checks.at(-1)?.hash, artifact.hash);
+      if (reviewer) {
+        assert.ok(events.some(e => e.type === 'tool_result' && (e.data as { agentId: string; name: string }).agentId === reviewer.id && (e.data as { name: string }).name === 'roundtable_artifact_read'));
+        const request = f.repo.messages(session.id).find(m => m.type === 'task_request');
+        assert.equal(request?.sender, local.id);
+        assert.deepEqual(request?.recipients, [reviewer.id]);
+        assert.equal(request?.taskId, task.id);
+        assert.equal(request?.expectsReply, true);
+        const turns = modelWire.turns.filter(t => t.protocol === 'anthropic' && t.user.includes(task.id));
+        assert.ok(turns.length > 0);
+        assert.ok(turns.every(t => t.tools.includes('roundtable_artifact_read') && !t.tools.includes('workspace_write') && !t.tools.includes('host_execute')));
+        const reviewTurns = turns.filter(t => t.user.includes(artifact.id));
+        assert.ok(reviewTurns.length > 0);
+        assert.ok(reviewTurns.every(t => !t.user.includes(artifact.content)), 'Peer messages must carry the reference only');
+        assert.ok(readdirSync(join(f.home, 'sessions', session.id, reviewer.id)).some(name => name.endsWith('.jsonl')));
+      }
+      assert.ok(readdirSync(join(f.home, 'sessions', session.id, local.id)).some(name => name.endsWith('.jsonl')));
+      return { session, artifact, engine, reviewer };
+    };
+    const solo = await run('solo');
+    const team = await run('team');
+    const recovery = await run('recovery');
+    const retry = await run('retry');
+    assert.equal(solo.artifact.hash, team.artifact.hash);
+    assert.equal(solo.artifact.hash, recovery.artifact.hash);
+    assert.equal(solo.artifact.hash, retry.artifact.hash);
+    const evaluate = (teamId: string) => compareSessions(f.repo, { task: collaborationObjective, solo: solo.session.id, team: teamId });
+    const clean = evaluate(team.session.id);
+    const recovered = evaluate(recovery.session.id);
+    const retried = evaluate(retry.session.id);
+    assert.equal(clean.solo.firstPass, true);
+    assert.equal(clean.team.firstPass, true);
+    assert.equal(recovered.team.complete, true);
+    assert.equal(recovered.team.firstPass, false);
+    assert.equal(retried.team.complete, true);
+    assert.equal(retried.team.firstPass, false, 'Recovered delivery still failed on the first pass');
+    assert.equal(retried.team.deliveryFailures, 1);
+    assert.equal(retried.team.toolFailures, 0);
+    assert.ok(clean.team.workRequests > clean.solo.workRequests);
+    const summary = ({ firstPass, usage, independentMessages, workRequests, admissionRequests, deliveryFailures }: typeof clean.solo) =>
+      ({ firstPass, workRequests, admissionRequests, toolCalls: usage.toolCalls, tokens: usage.tokens, independentMessages, deliveryFailures });
+    t.diagnostic(JSON.stringify({ solo: summary(clean.solo), team: summary(clean.team), artifactRecovery: summary(recovered.team), deliveryRetry: summary(retried.team) }));
+    const duplicate = f.repo.messages(team.session.id).find(m => m.type === 'task_response')!;
+    assert.throws(() => team.engine.send({ ...duplicate, id: randomUUID(), correlationId: randomUUID(), expectsReply: false }), /Repeated identical message suppressed/);
+    // Check execution-layer policy independently after capturing uncontaminated comparison metrics.
+    const denied = await team.engine.tools.execute({ ...team.reviewer!, permissions }, 'workspace_write', { path: 'forbidden.txt', content: 'denied' }, randomUUID());
+    assert.deepEqual(denied, { ok: false, data: 'Permission denied: workspace.write. Use roundtable_tool_request.' });
+    assert.equal(existsSync(join(team.session.workspace, 'forbidden.txt')), false);
+  } finally {
+    await Promise.all([...engines].map(e => e.close())); await f.close(); await modelWire.close();
+  }
+});
 
 test('real Pi OpenAI-compatible and Anthropic adapters discover, call and recover from web tools over loopback wire protocols', async () => {
   const { turns, auth, base, close } = await wire(script);
