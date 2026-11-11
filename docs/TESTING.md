@@ -475,3 +475,31 @@ Reviewed all 43 pending files covering web cache contracts, browser companion/na
 Additional checks passed: node --check for companion capture/popup/service worker and both smoke drivers; PowerShell parsing for native-host installer, browser smoke launcher and application installer; extension public-key identity matches egkfedophfeojpgaoifcemhapmfohnhk; git diff --check; heuristic credential-signature/conflict-marker scan across all pending files (no findings). The scanner retained the existing non-UTF-8 encoding in this historical testing document. These are bounded static checks, not proof of absence of every secret or bug.
 
 First-run changes now offer setup or a deterministic demo, sort configured/common providers first, and show a short Start here help section. Scripted coverage verifies provider ordering, setup back-navigation and controller Escape events. Earlier owner testing confirmed Escape exits a real Kimi sign-in wait and the first-run demo passes all ten acceptance checks; other provider sign-in flows and broader interactive behavior remain unverified. This review did not repeat metered inference or enable a browser extension. Actual companion capture and real local-model inference remain unverified. The normal installed application and private runtime were not updated. Owner explicitly authorized commit and push; Git records the resulting revision and remote state.
+
+## Local/cloud receipt collaboration — 2026-11-11
+
+Baseline `106e067` on Windows and Node 24.19.0 passed 274 tests with three optional sandbox skips. Two red runs reproduced independent defects. The original duplicate guard blocked a second request with the same wording and a new artifact reference. With that fixed, a team recovered from an HTTP 401 through reconnect and explicit retry, but session evaluation still reported first-pass success.
+
+The scripted loopback regression uses real Pi OpenAI-compatible and Anthropic Messages transports and independent JSONL histories. The writer claims the task, writes a permitted workspace file, parses JSON and publishes a receipt. The reviewer receives the ID, reads the artifact and runs the required check. The test verifies author and hash, an unauthorized workspace-write denial at execution even with stale caller-supplied permissions, and suppression when only reply metadata changes. In the repair trial, the reviewer rejected total 41 and accepted the new receipt with total 42. In the delivery trial, the same message was acknowledged on attempt two after reconnect and explicit retry. All four runs finished with the same artifact hash and no pending deliveries.
+
+| Scripted run | First pass | Work requests | Admission requests | Tool calls | Fixture tokens | Peer messages |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| Solo with human verification | Yes | 10 | 2 | 8 | 60 | 0 |
+| Local and cloud protocols | Yes | 15 | 4 | 12 | 95 | 2 |
+| Team with artifact correction | No | 25 | 4 | 20 | 145 | 4 |
+| Team with failed delivery and retry | No | 16 | 8 | 12 | 115 | 2 |
+
+The fixture returns fixed token counts and zero cost. Its usage counts verify recording and show the extra handoff and review steps in this task. They cannot establish comparative model quality or cost.
+
+Final `npm.cmd run check` passed typecheck, lint and build, with 275 passing tests, zero failures and three optional sandbox skips. `node --check scripts/live-collaboration-acceptance.mjs` passed. The two red logs and final green log are in `artifacts/verification/collaboration-milestone/`.
+
+The first live attempt used the existing LM Studio Qwen3.8 27B model and Z.ai GLM-5.3. The solo model passed admission, claimed the task, wrote the workspace file and parsed JSON before the 75-second turn ended in an aborted request. It recorded six requests, three tools and 27,065 tokens. The team reached local admission, then Z.ai rejected its first probe with HTTP 400 and code 1210 because GLM-5.3 requires a thinking level. That team recorded three requests and no workflow tools. Both incomplete results are retained in `live-attempt1/report.json`.
+
+The second live attempt kept the same receipt objective and deterministic contract for both sessions, used a 150-second turn limit, omitted the redundant pre-publication JSON parsing call and selected OpenRouter Kimi K3 for team review. The actual local Qwen3.8 27B writer ran through LM Studio on loopback. The hosted reviewer used its own Pi context and Roundtable-owned authentication. Both runs passed on their first delivery in this attempt and produced byte-identical receipts. The team passed task and artifact ID handoff, separate artifact retrieval, a check bound to the receipt hash, a correlated response acknowledged by the writer, scoped workspace access, and task closure.
+
+| Live run | Work requests | Admission requests | Tool calls | Reported tokens | Estimated provider cost |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Local solo with a human-role check | 6 | 2 | 5 | 60,146 | $0 |
+| Local writer and hosted Kimi reviewer | 12 | 4 | 10 | 108,500 | $0.02171895 |
+
+The team delegated the human-role check and added two peer messages. This is one matched synthetic comparison. Recovery and direct unauthorized-write denial were exercised in the scripted run. Live GLM-5.3 admission remains blocked with the current probe, and live sandbox, search and browser capture were outside this run. See `live-attempt2/report.json` for exact metrics and verification receipts. Both live attempts used isolated session storage. The temporary local model instance was unloaded and LM Studio again reported zero loaded models.

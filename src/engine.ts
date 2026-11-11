@@ -323,7 +323,12 @@ export class Engine extends EventEmitter {
     if (input.taskId) { const task = this.repo.get<{ sessionId: string }>('task', input.taskId); if (!task || task.sessionId !== this.sessionId) throw new Error('Unknown session task reference'); }
     for (const ref of input.artifacts) { const artifact = this.repo.get<{ sessionId: string }>('artifact', ref); if (!artifact || artifact.sessionId !== this.sessionId) throw new Error('Unknown session artifact reference'); }
     const previous = this.repo.messages(this.sessionId, undefined, 12);
-    if (input.sender !== 'human' && previous.some(m => m.sender === input.sender && m.body === redact(input.body) && m.threadId === input.threadId && JSON.stringify(m.recipients) === JSON.stringify(recipients))) throw new Error('Repeated identical message suppressed');
+    if (input.sender !== 'human' && previous.some(m =>
+      m.sender === input.sender && m.body === redact(input.body) && m.threadId === input.threadId &&
+      m.taskId === input.taskId &&
+      JSON.stringify(m.recipients) === JSON.stringify(recipients) &&
+      JSON.stringify(m.artifacts) === JSON.stringify(input.artifacts)
+    )) throw new Error('Repeated identical message suppressed');
     if (!courtesy && (!peer || input.expectsReply) && this.repo.deliveries(this.sessionId, ['pending', 'inflight']).length + recipients.length - (replaceQueuedId ? recipients.length : 0) > this.session().limits.queue) throw new Error('Message queue full');
     const state = this.session();
     if (courtesy) { /* Local conversation does not consume collaboration budgets. */ }

@@ -4,6 +4,21 @@ The purpose of Roundtable is to combine independently configured models' reasoni
 
 The dev.14 workflow adds independent investigation, peer response, a recorded shared plan, explicit file claims, guarded implementation contributions, substantive questions/answers, and author-excluding review. `/team <task-id>` exposes the evidence and decisions; `/plan` shows current assignments and blockers. Direct editor/review and solo modes remain available.
 
+## Receipt handoff acceptance
+
+The owner claims a task, runs a permitted workspace tool, and publishes a named immutable receipt. It sends the task ID and artifact ID to a reviewer in a `task_request`, then waits in `peers` mode. The reviewer retrieves the artifact with its own permission, runs the human-defined contract against that exact hash, and sends a correlated `task_response` with `expectsReply: true`. The owner can close the task after the current receipt passes. A failed check leaves it open. Publish a new artifact and use its ID to request another review. The same request wording can be reused for the new artifact.
+
+Use `/retry` after inspecting a failed delivery and any tool effects already recorded. Reconnecting preserves the failed delivery and each participant's Pi history. `roundtable evaluate` reports delivery failures and provider retries alongside the final result. A recovered run can complete while its first-pass field remains false.
+
+The Windows test suite uses Pi's OpenAI-compatible and Anthropic Messages transports with scripted loopback responses. For a bounded live comparison, use a configured tool-capable loopback model with at least 16,384 context tokens and a hosted model configured in Roundtable. Run from the checkout and give the script a fresh evidence directory under an existing parent.
+
+```powershell
+npm.cmd run build
+node scripts/live-collaboration-acceptance.mjs --run-live <auth-home> <new-evidence-folder> <local-base-url> <local-model> <cloud-provider> <cloud-model>
+```
+
+The opt-in command makes metered inference calls using synthetic arithmetic. Both runs use the same local writer and verification contract. The solo run uses a human-role deterministic check, and the team delegates that check to its hosted peer. The script saves both outcomes and usage in `report.json`. See the [recorded results](TESTING.md#localcloud-receipt-collaboration--2026-11-11).
+
 ## Observed live project improvement
 
 The Windows acceptance used three real independent Pi sessions: Sage (`openai-codex/gpt-6-sol`), Lark (`zai/glm-5.3-flash`) and Vale (`openrouter/moonshotai/kimi-k3`). An actual Roundtable source snapshot, an editable regression scaffold and the existing coding guide formed the disposable project. The independent Git-application checker lived outside the editable tree. Exact host Node/Git checks were approved with OS privileges; this was not sandbox acceptance. No credentials were copied.
